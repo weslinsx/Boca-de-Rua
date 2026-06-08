@@ -40,11 +40,11 @@ export async function POST(request) {
           disponivel: true
         }
       ])
-      .select()
-      .single();
+      .select();
 
     if (error) throw error;
-    return NextResponse.json({ success: true, produto: data }, { status: 201 });
+    if (!data || data.length === 0) throw new Error("Erro ao criar produto.");
+    return NextResponse.json({ success: true, produto: data[0] }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -70,11 +70,11 @@ export async function PUT(request) {
       .from("produtos")
       .update(dadosParaAtualizar)
       .eq("id", id)
-      .select()
-      .single();
+      .select();
 
     if (error) throw error;
-    return NextResponse.json({ success: true, produto: data });
+    if (!data || data.length === 0) throw new Error("Produto não encontrado.");
+    return NextResponse.json({ success: true, produto: data[0] });
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

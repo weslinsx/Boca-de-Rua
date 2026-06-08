@@ -24,12 +24,12 @@ export async function PUT(request) {
         atualizado_em: new Date(),
       })
       .eq("id", id)
-      .select()
-      .single();
+      .select();
 
     if (error) throw error;
+    if (!data || data.length === 0) throw new Error("Estabelecimento não encontrado ou sem permissão para atualizar.");
 
-    return NextResponse.json({ success: true, estabelecimento: data }, { status: 200 });
+    return NextResponse.json({ success: true, estabelecimento: data[0] }, { status: 200 });
   } catch (error) {
     console.error("Erro no PUT /api/parceiro:", error.message);
     return NextResponse.json(
