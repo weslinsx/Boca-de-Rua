@@ -23,7 +23,7 @@ async function getCardapioDados(slug) {
 }
 
 export default async function CardapioPublico({ params }) {
-  const { slug } = params;
+  const { slug } = await params;
   const dados = await getCardapioDados(slug);
 
   if (!dados) {

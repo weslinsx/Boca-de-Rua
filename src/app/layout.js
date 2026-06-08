@@ -4,10 +4,10 @@ import "./global.css";
 export const metadata = {
   title: "Boca de Rua - Cardápios Digitais",
   description: "Plataforma de gerenciamento de cardápios para comércios de rua",
-  themeColor: "#111827", // Cor da barra de status no Android
 };
 
 export const viewport = {
+  themeColor: "#111827",
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
