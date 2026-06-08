@@ -1,95 +1,94 @@
 // src/app/api/parceiro/produtos/route.js
-import { supabase } from "@/lib/supabase";
 import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
 
-// [GET e POST permanecem iguais, adicione PUT e DELETE abaixo]
-
+// Listar produtos do estabelecimento
 export async function GET(request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const estabelecimentoId = searchParams.get("estabelecimentoId");
-    if (!estabelecimentoId) return NextResponse.json({ error: "Estabelecimento não informado." }, { status: 400 });
+  const { searchParams } = new URL(request.url);
+  const estabelecimentoId = searchParams.get("estabelecimentoId");
 
-    const { data: produtos, error } = await supabase
-      .from("produtos")
-      .select("*")
-      .eq("estabelecimento_id", estabelecimentoId)
-      .order("id", { ascending: false });
-
-    if (error) throw error;
-    return NextResponse.json(produtos);
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  if (!estabelecimentoId) {
+    return NextResponse.json({ error: "Estabelecimento ID ausente" }, { status: 400 });
   }
+
+  const { data, error } = await supabase
+    .from("produtos")
+    .select("*")
+    .eq("estabelecimento_id", estabelecimentoId)
+    .order("id", { ascending: false });
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json(data);
 }
 
+// Cadastrar novo produto
 export async function POST(request) {
   try {
-    const { estabelecimentoId, nome, descricao, preco, categoriaId, imagemUrl } = await request.json();
-    if (!estabelecimentoId || !nome || !preco || !categoriaId) {
-      return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 });
-    }
+    const body = await request.json();
+    const { estabelecimentoId, nome, descricao, preco, categoriaId, imagemUrl } = body;
 
-    const { data: novoProduto, error } = await supabase
+    const { data, error } = await supabase
       .from("produtos")
-      .insert([{
-        estabelecimento_id: estabelecimentoId,
-        nome: nome.trim(),
-        descricao: descricao?.trim(),
-        preco: parseFloat(preco),
-        categoria_id: parseInt(categoriaId), 
-        imagem_url: imagemUrl || null, // Salva a URL da imagem ou null se vazia 
-        disponivel: true
-      }])
-      .select().single();
+      .insert([
+        {
+          estabelecimento_id: parseInt(estabelecimentoId),
+          nome,
+          descricao,
+          preco: parseFloat(preco),
+          categoria_id: parseInt(categoriaId),
+          imagem_url: imagemUrl || null,
+          disponivel: true
+        }
+      ])
+      .select()
+      .single();
 
     if (error) throw error;
-    return NextResponse.json({ success: true, produto: novoProduto });
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ success: true, produto: data }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// 3. ATUALIZAR OU PAUSAR PRODUTO
+// Atualizar produto existente (Ou alternar disponibilidade)
 export async function PUT(request) {
   try {
-    const { id, disponivel, nome, preco, descricao, categoriaId, imagemUrl } = await request.json();
+    const body = await request.json();
+    const { id, nome, descricao, preco, categoriaId, imagemUrl, disponivel } = body;
 
-    const { data: produtoAtualizado, error } = await supabase
+    // Se o body contiver apenas id e disponivel, estamos alternando o status (pausar/ativar)
+    const dadosParaAtualizar = nome !== undefined ? {
+      nome,
+      descricao,
+      preco: parseFloat(preco),
+      categoria_id: parseInt(categoriaId),
+      imagem_url: imagemUrl || null,
+      disponivel
+    } : { disponivel };
+
+    const { data, error } = await supabase
       .from("produtos")
-      .update({
-        ...(disponivel !== undefined && { disponivel }),
-        ...(nome && { nome: nome.trim() }),
-        ...(preco && { preco: parseFloat(preco) }),
-        ...(descricao && { descricao: descricao.trim() }),
-        ...(imagemUrl !== undefined && { imagem_url: imagemUrl || null }), // Atualiza a URL da imagem se fornecida
-        ...(categoriaId && { categoria_id: parseInt(categoriaId) }),
-        atualizado_em: new Date()
-      })
+      .update(dadosParaAtualizar)
       .eq("id", id)
       .select()
       .single();
 
     if (error) throw error;
-    return NextResponse.json({ success: true, produto: produtoAtualizado });
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ success: true, produto: data });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// 4. DELETAR PRODUTO
+// Deletar produto
 export async function DELETE(request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id");
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
 
-    if (!id) return NextResponse.json({ error: "ID não informado." }, { status: 400 });
+  if (!id) return NextResponse.json({ error: "ID ausente" }, { status: 400 });
 
-    const { error } = await supabase.from("produtos").delete().eq("id", id);
-    if (error) throw error;
+  const { error } = await supabase.from("produtos").delete().eq("id", id);
 
-    return NextResponse.json({ success: true, message: "Produto removido com sucesso." });
-  } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ success: true });
 }

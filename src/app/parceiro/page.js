@@ -12,9 +12,17 @@ export default function ParceiroDashboard() {
   const [produtos, setProdutos] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Estado para os dados da Loja/Estabelecimento
+  const [lojaForm, setLojaForm] = useState({ 
+    avatar_url: "", 
+    banner_url: "", 
+    telefone: "", 
+    endereco: "" 
+  });
+
   // Estados do Formulário de Produto
   const [form, setForm] = useState({ nome: "", descricao: "", preco: "", categoriaId: "1", imagemUrl: "" });
-  const [editandoId, setEditandoId] = useState(null); // null = cadastro, número = editando este ID
+  const [editandoId, setEditandoId] = useState(null); 
   const [erroForm, setErroForm] = useState("");
   const [cadastrando, setCadastrando] = useState(false);
 
@@ -49,6 +57,12 @@ export default function ParceiroDashboard() {
 
       if (errEst || !est) throw new Error("Estabelecimento não encontrado.");
       setLoja(est);
+      setLojaForm({
+        avatar_url: est.avatar_url || "",
+        banner_url: est.banner_url || "",
+        telefone: est.telefone || "",
+        endereco: est.endereco || ""
+      });
 
       const resProd = await fetch(`/api/parceiro/produtos?estabelecimentoId=${est.id}`);
       const dadosProd = await resProd.json();
@@ -60,7 +74,29 @@ export default function ParceiroDashboard() {
     }
   }
 
-  // Envia tanto o Cadastro quanto a Edição para a API
+  const handleSalvarLoja = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("/api/parceiro", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: loja.id,
+          ...lojaForm
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || "Erro ao salvar dados da loja.");
+      
+      setLoja(data.estabelecimento);
+      alert("Dados da loja atualizados com sucesso!");
+    } catch (err) {
+      alert(`Erro ao atualizar loja: ${err.message}`);
+    }
+  };
+
   const handleSalvarProduto = async (e) => {
     e.preventDefault();
     setErroForm("");
@@ -83,17 +119,15 @@ export default function ParceiroDashboard() {
       if (!res.ok) throw new Error(data.error || "Erro ao salvar produto.");
 
       if (editandoId) {
-        // Atualiza o item editado na lista local
         setProdutos(produtos.map(p => p.id === editandoId ? data.produto : p));
         alert("Produto atualizado com sucesso!");
       } else {
-        // Adiciona o novo item no topo da lista local
         setProdutos([data.produto, ...produtos]);
         alert("Produto adicionado ao cardápio!");
       }
 
-      // Limpa o formulário e sai do modo de edição
-      setForm({ nome: "", descricao: "", preco: "", categoriaId: "1" });
+      // CORREÇÃO: Reset completo do formulário incluindo a string vazia do imagemUrl
+      setForm({ nome: "", descricao: "", preco: "", categoriaId: "1", imagemUrl: "" });
       setEditandoId(null);
     } catch (err) {
       setErroForm(err.message);
@@ -102,7 +136,6 @@ export default function ParceiroDashboard() {
     }
   };
 
-  // Preenche o formulário da esquerda com os dados do lanche para edição
   const iniciarEdicao = (produto) => {
     setEditandoId(produto.id);
     setForm({
@@ -110,9 +143,9 @@ export default function ParceiroDashboard() {
       descricao: produto.descricao || "",
       preco: produto.preco,
       categoriaId: String(produto.categoria_id),
-      imagemUrl: produto.imagem_url || "" // Preenche a URL da imagem para edição
+      imagemUrl: produto.imagem_url || "" 
     });
-    window.scrollTo({ top: 0, behavior: "smooth" }); // Sobe a tela no mobile
+    window.scrollTo({ top: 0, behavior: "smooth" }); 
   };
 
   const cancelarEdicao = () => {
@@ -188,6 +221,61 @@ export default function ParceiroDashboard() {
 
       <main className="p-6 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         
+        {/* Seção de Identidade da Loja */}
+        <div className="lg:col-span-3">
+          <form onSubmit={handleSalvarLoja} className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl space-y-4">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-sm font-black text-emerald-400 uppercase tracking-wider">🖼️ Identidade e Contato da Loja</h2>
+              <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold py-1.5 px-4 rounded uppercase transition-colors">
+                Salvar Dados da Loja
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link do Avatar (Logo)</label>
+                <input 
+                  type="url" 
+                  value={lojaForm.avatar_url || ""} 
+                  onChange={(e) => setLojaForm({...lojaForm, avatar_url: e.target.value})} 
+                  className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
+                  placeholder="https://..." 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link do Banner</label>
+                <input 
+                  type="url" 
+                  value={lojaForm.banner_url || ""} 
+                  onChange={(e) => setLojaForm({...lojaForm, banner_url: e.target.value})} 
+                  className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
+                  placeholder="https://..." 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">WhatsApp (Número)</label>
+                <input 
+                  type="text" 
+                  value={lojaForm.telefone || ""} 
+                  onChange={(e) => setLojaForm({...lojaForm, telefone: e.target.value})} 
+                  className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
+                  placeholder="91988887777" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Endereço de Retirada</label>
+                <input 
+                  type="text" 
+                  value={lojaForm.endereco || ""} 
+                  onChange={(e) => setLojaForm({...lojaForm, endereco: e.target.value})} 
+                  className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white" 
+                  placeholder="Rua Exemplo, 123" 
+                />
+              </div>
+            </div>
+          </form>
+        </div>
+        
         {/* Formulário de Cadastro / Edição */}
         <div className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl h-fit sticky top-6">
           <h2 className="text-base font-black text-white mb-4 flex items-center gap-2">
@@ -218,12 +306,11 @@ export default function ParceiroDashboard() {
               </div>
             </div>
 
-            {/* CAMPO DE IMAGEM ADICIONADO VISUALMENTE */}
             <div>
               <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Link/URL da Foto do Produto</label>
               <input 
                 type="url" 
-                value={form.imagemUrl} 
+                value={form.imagemUrl || ""} 
                 onChange={(e) => setForm({...form, imagemUrl: e.target.value})} 
                 className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm text-white font-mono" 
                 placeholder="https://exemplo.com/suafoto.jpg" 
@@ -232,7 +319,7 @@ export default function ParceiroDashboard() {
 
             <div>
               <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Ingredientes / Descrição</label>
-              <textarea rows="3" value={form.descricao} onChange={(e) => setForm({...form, descricao: e.target.value})} className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white" placeholder="Descrição do produto..." />
+              <textarea rows="3" value={form.descricao} onChange={(e) => setForm({...form, descricao: e.target.value})} className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono placeholder:font-sans" placeholder="Descrição do produto..." />
             </div>
 
             <div className="space-y-2">
@@ -269,26 +356,37 @@ export default function ParceiroDashboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {produtos.map((p) => (
                 <div key={p.id} className={`bg-[#1f2937] border ${p.disponivel ? 'border-[#374151]' : 'border-rose-900/50 bg-rose-950/10'} p-4 rounded-xl flex flex-col justify-between transition-all`}>
+                  
+                  {/* Bloco de cima do card */}
                   <div>
-                    <div className="flex justify-between items-start mb-1">
-                      <h3 className={`font-bold text-sm ${p.disponivel ? 'text-white' : 'text-gray-500 line-through'}`}>{p.nome}</h3>
-                      <span className="bg-[#111827] text-[10px] text-gray-400 px-2 py-0.5 rounded font-medium uppercase border border-[#374151]">
-                        {getCategoriaNome(p.categoria_id)}
-                      </span>
+                    <div className="flex justify-between items-start gap-2 mb-2">
+                      <div className="flex-1">
+                        <h3 className={`font-bold text-sm ${p.disponivel ? 'text-white' : 'text-gray-500 line-through'}`}>{p.nome}</h3>
+                        <span className="inline-block bg-[#111827] text-[9px] text-gray-400 px-1.5 py-0.5 rounded font-medium uppercase border border-[#374151] mt-1">
+                          {getCategoriaNome(p.categoria_id)}
+                        </span>
+                      </div>
+                      
+                      {/* NOVO: Miniatura da foto do lanche para conferência do parceiro */}
+                      {p.imagem_url && (
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-[#111827] border border-[#374151] flex-shrink-0">
+                          <img src={p.imagem_url} alt={p.nome} className="w-full h-full object-cover" />
+                        </div>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400 line-clamp-2 mb-3">{p.descricao || "Sem descrição informada."}</p>
                   </div>
                   
+                  {/* Bloco de baixo / Ações */}
                   <div className="flex justify-between items-center border-t border-[#374151]/50 pt-3 mt-2 gap-2">
                     <span className="text-sm font-black text-emerald-400 font-mono">
                       R$ {parseFloat(p.preco).toFixed(2)}
                     </span>
                     
                     <div className="flex items-center gap-1.5">
-                      {/* Botão Alterar Status */}
-                      <button 
+                      <button
                         onClick={() => handleAlternarDisponibilidade(p.id, p.disponivel)}
-                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded transition-colors ${
+                        className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded transition-colors select-none ${
                           p.disponivel 
                             ? "bg-emerald-950 text-emerald-400 hover:bg-amber-950 hover:text-amber-400" 
                             : "bg-amber-950 text-amber-400 hover:bg-emerald-950 hover:text-emerald-400"
@@ -297,25 +395,24 @@ export default function ParceiroDashboard() {
                         {p.disponivel ? "🟢 Ativo" : "🟠 Pausado"}
                       </button>
 
-                      {/* Botão Editar Dados */}
                       <button 
                         onClick={() => iniciarEdicao(p)}
-                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 p-1 px-2 rounded border border-[#374151] text-xs transition-colors"
+                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 p-2 px-3 rounded border border-[#374151] text-xs transition-colors select-none"
                         title="Editar Detalhes"
                       >
                         📝
                       </button>
 
-                      {/* Botão Deletar */}
                       <button 
                         onClick={() => handleDeletarProduto(p.id)}
-                        className="bg-gray-800 hover:bg-rose-950 hover:text-rose-400 text-gray-400 p-1 px-2 rounded border border-[#374151] text-xs transition-colors"
+                        className="bg-gray-800 hover:bg-rose-950 hover:text-rose-400 text-gray-400 p-2 px-3 rounded border border-[#374151] text-xs transition-colors select-none"
                         title="Excluir Item"
                       >
                         🗑️
                       </button>
                     </div>
                   </div>
+
                 </div>
               ))}
             </div>
