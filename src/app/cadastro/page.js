@@ -1,10 +1,10 @@
 // src/app/cadastro/page.js
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function CadastroPage() {
+function CadastroForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
@@ -114,5 +114,13 @@ export default function CadastroPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function CadastroPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#111827] flex items-center justify-center text-emerald-400 font-bold">Carregando formulário...</div>}>
+      <CadastroForm />
+    </Suspense>
   );
 }
