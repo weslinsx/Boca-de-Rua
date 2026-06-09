@@ -657,7 +657,7 @@ export default function ParceiroDashboard() {
                 </span>
               </div>
 
-              {textos_produtos_vazio = produtos.length === 0 ? (
+              {produtos.length === 0 ? (
                 <div className="border border-dashed border-[#374151] rounded-xl p-12 text-center text-gray-500 text-sm">
                   Nenhum lanche catalogado ainda. Use o formulário lateral para dar o pontapé inicial! 🍟
                 </div>
