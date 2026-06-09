@@ -2,30 +2,43 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-// Listar produtos do estabelecimento
+// =========================================================================
+// 1. GET: Listar produtos do estabelecimento
+// =========================================================================
 export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const estabelecimentoId = searchParams.get("estabelecimentoId");
+  try {
+    const { searchParams } = new URL(request.url);
+    const estabelecimentoId = searchParams.get("estabelecimentoId");
 
-  if (!estabelecimentoId) {
-    return NextResponse.json({ error: "Estabelecimento ID ausente" }, { status: 400 });
+    if (!estabelecimentoId) {
+      return NextResponse.json({ error: "Estabelecimento ID ausente" }, { status: 400 });
+    }
+
+    const { data, error } = await supabase
+      .from("produtos")
+      .select("*")
+      .eq("estabelecimento_id", estabelecimentoId)
+      .order("id", { ascending: false });
+
+    if (error) throw error;
+    return NextResponse.json(data, { status: 200 });
+  } catch (error) {
+    console.error("Erro no GET /api/parceiro/produtos:", error.message);
+    return NextResponse.json({ error: "Falha ao buscar produtos." }, { status: 500 });
   }
-
-  const { data, error } = await supabase
-    .from("produtos")
-    .select("*")
-    .eq("estabelecimento_id", estabelecimentoId)
-    .order("id", { ascending: false });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
 }
 
-// Cadastrar novo produto
+// =========================================================================
+// 2. POST: Cadastrar novo produto
+// =========================================================================
 export async function POST(request) {
   try {
     const body = await request.json();
     const { estabelecimentoId, nome, descricao, preco, categoriaId, imagemUrl } = body;
+
+    if (!estabelecimentoId || !nome || preco === undefined) {
+      return NextResponse.json({ error: "Dados obrigatórios ausentes." }, { status: 400 });
+    }
 
     const { data, error } = await supabase
       .from("produtos")
@@ -33,62 +46,78 @@ export async function POST(request) {
         {
           estabelecimento_id: parseInt(estabelecimentoId),
           nome,
-          descricao,
-          preco: parseFloat(preco),
-          categoria_id: parseInt(categoriaId),
+          descricao: descricao || null,
+          preco: parseFloat(preco || 0),
+          categoria_id: categoriaId ? parseInt(categoriaId) : null,
           imagem_url: imagemUrl || null,
           disponivel: true
         }
       ])
-      .select();
+      .select()
+      .single();
 
     if (error) throw error;
-    if (!data || data.length === 0) throw new Error("Erro ao criar produto.");
-    return NextResponse.json({ success: true, produto: data[0] }, { status: 201 });
+    return NextResponse.json({ success: true, produto: data }, { status: 201 });
   } catch (error) {
+    console.error("Erro no POST /api/parceiro/produtos:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// Atualizar produto existente (Ou alternar disponibilidade)
+// =========================================================================
+// 3. PUT: Atualizar produto existente (Ou alternar disponibilidade)
+// =========================================================================
 export async function PUT(request) {
   try {
     const body = await request.json();
     const { id, nome, descricao, preco, categoriaId, imagemUrl, disponivel } = body;
 
-    // Se o body contiver apenas id e disponivel, estamos alternando o status (pausar/ativar)
+    // Validação de segurança crucial
+    if (!id) {
+      return NextResponse.json({ error: "O ID do produto é obrigatório para atualização." }, { status: 400 });
+    }
+
+    // Se o nome vier preenchido, é uma atualização completa. Se não, é apenas o toggle de pausar produto.
     const dadosParaAtualizar = nome !== undefined ? {
       nome,
-      descricao,
-      preco: parseFloat(preco),
-      categoria_id: parseInt(categoriaId),
+      descricao: descricao || null,
+      preco: parseFloat(preco || 0),
+      categoria_id: categoriaId ? parseInt(categoriaId) : null,
       imagem_url: imagemUrl || null,
-      disponivel
+      disponivel: disponivel ?? true
     } : { disponivel };
 
     const { data, error } = await supabase
       .from("produtos")
       .update(dadosParaAtualizar)
       .eq("id", id)
-      .select();
+      .select()
+      .single();
 
     if (error) throw error;
-    if (!data || data.length === 0) throw new Error("Produto não encontrado.");
-    return NextResponse.json({ success: true, produto: data[0] });
+    return NextResponse.json({ success: true, produto: data }, { status: 200 });
   } catch (error) {
+    console.error("Erro no PUT /api/parceiro/produtos:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// Deletar produto
+// =========================================================================
+// 4. DELETE: Deletar produto
+// =========================================================================
 export async function DELETE(request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
 
-  if (!id) return NextResponse.json({ error: "ID ausente" }, { status: 400 });
+    if (!id) return NextResponse.json({ error: "ID ausente" }, { status: 400 });
 
-  const { error } = await supabase.from("produtos").delete().eq("id", id);
+    const { error } = await supabase.from("produtos").delete().eq("id", id);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ success: true });
+    if (error) throw error;
+    return NextResponse.json({ success: true }, { status: 200 });
+  } catch (error) {
+    console.error("Erro no DELETE /api/parceiro/produtos:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }
