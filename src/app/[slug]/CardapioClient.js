@@ -3,9 +3,9 @@
 
 import { useCart } from "@/context/CartContext";
 import { useState, useEffect } from "react";
-import { gerarLinkWhatsApp } from "@/app/utils/whatsapp";
+import { gerarLinkWhatsApp, formatarTelefone } from "@/app/utils/whatsapp";
 
-export default function CardapioClient({ loja, produtos }) {
+export default function CardapioClient({ loja, produtos, categorias }) { // Adicione 'categorias' aqui
   const { addToCart, removeFromCart, clearCart, cart, totalItens, precoTotal } = useCart();
   const [isSacolaAberta, setIsSacolaAberta] = useState(false);
   const [produtoSelecionado, setProdutoSelecionado] = useState(null);
@@ -45,8 +45,12 @@ export default function CardapioClient({ loja, produtos }) {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
+    
+    // Aplica a máscara se o campo for o whatsapp
+    const valorFinal = name === "whatsapp" ? formatarTelefone(value) : value;
+
     setFormData(prev => {
-      const novosDados = { ...prev, [name]: value };
+      const novosDados = { ...prev, [name]: valorFinal };
       // Salva no localStorage para não perder os dados digitados
       localStorage.setItem("bocaDeRua_clienteDados", JSON.stringify({
         nome: novosDados.nome,
@@ -84,7 +88,7 @@ export default function CardapioClient({ loja, produtos }) {
       body: JSON.stringify({
         estabelecimentoId: loja.id,
         clienteNome: formData.nome,
-        clienteWhatsapp: whatsappLimpo, // Envia o número limpo (ex: 91981331067)
+        clienteWhatsapp: whatsappLimpo, // Envia o número limpo (ex: 91999999999)
         tipoEntrega: formData.tipoEntrega,
         enderecoEntrega: formData.tipoEntrega === "delivery" ? formData.endereco : null,
         pontoReferencia: formData.tipoEntrega === "delivery" ? formData.pontoReferencia : null, // ADICIONADO
@@ -105,7 +109,7 @@ export default function CardapioClient({ loja, produtos }) {
       const pedidoGravado = await response.json();
       
       // Mapeamento inteligente para achar o ID correto independente de como a API respondeu
-      const pedidoId = pedidoGravado.pedidoId || 
+      const pedidoId = pedidoGravado.numeroPedidoParceiro || // Prioriza o número sequencial do parceiro
                       pedidoGravado.id || 
                       pedidoGravado[0]?.id || 
                       pedidoGravado.data?.id || 
@@ -138,12 +142,14 @@ export default function CardapioClient({ loja, produtos }) {
     }
   };
 
-  const categoriasDoCardapio = {
-    1: { nome: "🍔 Lanches & Salgados", itens: produtos.filter(p => p.categoria_id === 1) },
-    2: { nome: "🥤 Bebidas Geladas", itens: produtos.filter(p => p.categoria_id === 2) },
-    3: { nome: "🎁 Combos Promocionais", itens: produtos.filter(p => p.categoria_id === 3) },
-    4: { nome: "🍟 Porções da Casa", itens: produtos.filter(p => p.categoria_id === 4) },
-  };
+  // Substitua o seu objeto estático "categoriasDoCardapio" por essa lógica dinâmica:
+  const categoriasDoCardapio = (categorias || []).reduce((acc, cat) => {
+    acc[cat.id] = {
+      nome: cat.nome,
+      itens: produtos.filter(p => p.categoria_id === cat.id)
+    };
+    return acc;
+  }, {});
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-white antialiased pb-32 touch-manipulation">
@@ -155,7 +161,7 @@ export default function CardapioClient({ loja, produtos }) {
       {/* Cabeçalho do Estabelecimento */}
       <div className="max-w-2xl mx-auto px-4 -mt-16 relative z-10 text-center sm:text-left sm:flex sm:items-end sm:gap-4">
         <div className="w-24 h-24 rounded-2xl overflow-hidden bg-[#1e293b] border-4 border-[#0f172a] mx-auto sm:mx-0 shadow-xl flex-shrink-0">
-          <img src={loja.logo_url || loja.avatar_url || "https://placehold.co/150"} alt={loja.nome} className="w-full h-full object-cover" />
+          <img src={loja.logo_url || "https://placehold.co/150"} alt={loja.nome} className="w-full h-full object-cover" />
         </div>
         <div className="mt-3 sm:mt-0 flex-1">
           <h1 className="text-2xl font-black tracking-tight">{loja.nome}</h1>
@@ -344,7 +350,7 @@ export default function CardapioClient({ loja, produtos }) {
                 </div>
                 <div>
                   <label className="block text-[10px] text-gray-400 font-bold uppercase mb-1">Seu WhatsApp *</label>
-                  <input type="tel" name="whatsapp" required value={formData.whatsapp} onChange={handleInputChange} placeholder="Ex: 91981331067" className="w-full bg-[#0f172a] border border-[#334155] rounded-lg p-2 text-xs text-white focus:outline-none focus:border-emerald-500" />
+                  <input type="tel" name="whatsapp" required value={formData.whatsapp} onChange={handleInputChange} placeholder="Ex: 9198994-4556" className="w-full bg-[#0f172a] border border-[#334155] rounded-lg p-2 text-xs text-white focus:outline-none focus:border-emerald-500" />
                 </div>
                 <div>
                   <label className="block text-[10px] text-gray-400 font-bold uppercase mb-1">Como deseja receber? *</label>

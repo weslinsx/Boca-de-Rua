@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { formatarTelefone } from "@/app/utils/whatsapp";
 
 export default function ParceiroDashboard() {
   const router = useRouter();
@@ -17,9 +18,9 @@ export default function ParceiroDashboard() {
 
   // Estado para os dados da Loja/Estabelecimento
   const [lojaForm, setLojaForm] = useState({ 
-    avatar_url: "", 
+    logo_url: "", 
     banner_url: "", 
-    telefone: "", 
+    telefone_whatsapp: "", 
     endereco: "" 
   });
 
@@ -28,15 +29,48 @@ export default function ParceiroDashboard() {
   const [editandoId, setEditandoId] = useState(null); 
   const [erroForm, setErroForm] = useState("");
   const [cadastrando, setCadastrando] = useState(false);
+  const [categorias, setCategorias] = useState([]);
+
+  // Novos estados para o gerenciamento de categorias
+  const [novaCategoria, setNovaCategoria] = useState("");
+  const [categoriaEditando, setCategoriaEditando] = useState(null);
+
+  // Função para buscar as categorias da API
+  const buscarCategorias = useCallback(async () => {
+    const estabelecimentoId = loja?.id || 1; // Prioriza o ID real da loja
+    const res = await fetch(`/api/parceiro/categorias?estabelecimentoId=${estabelecimentoId}`);
+    if (res.ok) {
+      const dados = await res.json();
+      setCategorias(dados);
+    }
+  }, [loja?.id]);
+
+  // Chame essa função junto com o seu carregamento inicial (no useEffect que já existe)
+  useEffect(() => {
+    buscarCategorias();
+
+    // Registrar Service Worker e Pedir Permissão para Notificações
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      navigator.serviceWorker.register('/sw.js')
+        .then((reg) => {
+          console.log('Service Worker registrado com sucesso!', reg);
+          
+          // Solicita permissão ao usuário
+          Notification.requestPermission().then((permission) => {
+            if (permission === 'granted') {
+              console.log('Permissão de notificação concedida!');
+            } else {
+              console.warn('O usuário bloqueou as notificações.');
+            }
+          });
+        })
+        .catch((err) => console.error('Erro ao registrar Service Worker:', err));
+    }
+  }, [buscarCategorias]);
 
   const getCategoriaNome = (id) => {
-    const mapeamento = {
-      1: "🍔 Lanches / Salgados",
-      2: "🥤 Bebidas",
-      3: "🎁 Combos",
-      4: "🍟 Porções"
-    };
-    return mapeamento[id] || `Categoria ${id}`;
+    const categoriaEncontrada = categorias.find((cat) => cat.id === parseInt(id));
+    return categoriaEncontrada ? categoriaEncontrada.nome : `Categoria ${id}`;
   };
 
   useEffect(() => {
@@ -50,26 +84,80 @@ export default function ParceiroDashboard() {
     carregarDadosParceiro(dadosUser.id);
   }, [router]);
 
+  // Função para buscar pedidos (reutilizável para polling e atualização manual)
+  const buscarPedidos = useCallback(async () => {
+    if (!loja?.id) return;
+    try {
+      const resPed = await fetch(`/api/pedidos?estabelecimentoId=${loja.id}`);
+      if (!resPed.ok) return;
+      const dadosPed = await resPed.json();
+      setPedidos(dadosPed);
+    } catch (err) {
+      console.error("Erro no polling de pedidos:", err);
+    }
+  }, [loja?.id]);
+
+  // Efeito de Polling: Atualiza os pedidos a cada 15 segundos se estiver na aba de pedidos
+  useEffect(() => {
+    if (!loja?.id || viewPrincipal !== "pedidos") return;
+    
+    const intervalo = setInterval(() => buscarPedidos(), 15000);
+    return () => clearInterval(intervalo);
+  }, [buscarPedidos, loja?.id, viewPrincipal]);
+
   // Filtros de Pedidos
   const pedidosPendentes = pedidos.filter(p => p.status === 'pendente');
-  const pedidosEmPreparo = pedidos.filter(p => ['aceito', 'em_preparacao', 'saiu_entrega'].includes(p.status));
-  const historicoPedidos = pedidos.filter(p => ['entregue', 'cancelado'].includes(p.status));
+  const pedidosEmPreparo = pedidos.filter(p => ['confirmado', 'saiu_entrega'].includes(p.status));
+  const historicoPedidos = pedidos.filter(p => ['finalizado', 'cancelado'].includes(p.status));
 
-  // Alerta Sonoro de Novos Pedidos
-  useEffect(() => {
-    let audio;
-    if (pedidosPendentes.length > 0) {
-      audio = new Audio('/sons/alerta-novo-pedido.mp3');
-      audio.loop = true;
-      audio.play().catch(err => console.log("Aguardando interação para tocar áudio."));
+  // Função isolada para disparar o combo: Som Local + Notificação Visual
+  const dispararAlertaNovoPedido = useCallback(() => {
+    // 1. Toca o som no navegador (se a aba estiver aberta)
+    const audio = new Audio('/sons/alerta-novo-pedido.mp3');
+    audio.play().catch(e => console.log("Áudio bloqueado pelo navegador ou aguardando interação:", e));
+
+    // 2. Dispara a Notificação do Sistema via Service Worker
+    if (Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((registration) => {
+        registration.showNotification('⚠️ Pedido Pendente!', {
+          body: 'Você tem um novo pedido!',
+          icon: '/icon.png',
+          tag: 'alerta-recorrente', // Evita duplicar notificações na barra do Android
+          renotify: true, // Faz o celular vibrar/tocar de novo a cada repetição
+          requireInteraction: true, // Mantém o alerta fixo na tela do celular
+          data: { url: '/parceiro' } // 🎯 Define a URL para o Service Worker abrir
+        });
+      });
     }
+  }, []);
+
+  // Dispara o som toda vez que o parceiro clicar/entrar na aba de pedidos
+  useEffect(() => {
+    if (viewPrincipal === 'pedidos' && pedidosPendentes.length > 0) {
+      const audio = new Audio('/sons/alerta-novo-pedido.mp3');
+      audio.play().catch((err) => console.log("Aguardando clique inicial para liberar áudio:", err));
+    }
+  }, [viewPrincipal, pedidosPendentes.length]);
+
+  // Alerta repetitivo para pedidos não tratados
+  useEffect(() => {
+    let intervalo = null;
+
+    if (pedidosPendentes.length > 0) {
+      // Dispara o primeiro alerta imediatamente
+      dispararAlertaNovoPedido();
+
+      // Configura a repetição a cada 1 minuto (60000ms)
+      intervalo = setInterval(() => {
+        dispararAlertaNovoPedido();
+      }, 60000); 
+    }
+
     return () => {
-      if (audio) {
-        audio.pause();
-        audio = null;
-      }
+      if (intervalo) clearInterval(intervalo);
     };
-  }, [pedidosPendentes.length]);
+  }, [pedidosPendentes.length, dispararAlertaNovoPedido]);
+
 
   async function carregarDadosParceiro(parceiroId) {
     try {
@@ -82,9 +170,9 @@ export default function ParceiroDashboard() {
       if (errEst || !est) throw new Error("Estabelecimento não encontrado.");
       setLoja(est);
       setLojaForm({
-        avatar_url: est.avatar_url || "",
+        logo_url: est.logo_url || "",
         banner_url: est.banner_url || "",
-        telefone: est.telefone || "",
+        telefone_whatsapp: est.telefone_whatsapp || "",
         endereco: est.endereco || ""
       });
 
@@ -179,7 +267,7 @@ export default function ParceiroDashboard() {
     setForm({
       nome: produto.nome,
       descricao: produto.descricao || "",
-      preco: p.preco,
+      preco: produto.preco,
       categoriaId: String(produto.categoria_id),
       imagemUrl: produto.imagem_url || "" 
     });
@@ -228,78 +316,160 @@ export default function ParceiroDashboard() {
     }
   };
 
-  const handleUpdateStatus = async (pedidoId, currentStatus) => {
-    const statusFlow = ['pendente', 'aceito', 'em_preparacao', 'saiu_entrega', 'entregue'];
-    const idx = statusFlow.indexOf(currentStatus);
-    const proximoStatus = idx !== -1 && idx < statusFlow.length - 1 ? statusFlow[idx + 1] : null;
-
-    if (!proximoStatus) return;
-
-    try {
-      const res = await fetch("/api/pedidos", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: pedidoId, pedidoId: pedidoId, status: proximoStatus }),
-      });
-      
-      if (res.ok) {
-        setPedidos(pedidos.map(p => p.id === pedidoId ? { ...p, status: proximoStatus } : p));
-      } else {
-        alert("Erro ao atualizar status no servidor.");
-      }
-    } catch (err) {
-      alert("Erro de rede ao atualizar status");
-    }
-  };
-
-  const handleCancelarPedido = async (pedidoId) => {
-    const motivo = prompt("Informe o motivo do cancelamento:");
-    if (!motivo) return;
+  // Função Robusta de Alteração de Status com UI Otimista para Touch
+  const alterarStatusPedido = async (pedidoId, novoStatus, motivoCancelamento = null) => {
+    // Salva estado original para rollback em caso de erro
+    const pedidosOriginais = [...pedidos];
+    
+    // Atualização Otimista (UX rápida)
+    setPedidos(prev => prev.map(p => 
+      p.id === pedidoId ? { ...p, status: novoStatus, motivo_cancelamento: motivoCancelamento } : p
+    ));
 
     try {
       const res = await fetch("/api/pedidos", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: pedidoId, pedidoId: pedidoId, status: "cancelado", motivoCancelamento: motivo, motivo_cancelamento: motivo }),
+        body: JSON.stringify({
+          pedidoId, 
+          status: novoStatus, 
+          motivoCancelamento,
+          motivo_cancelamento: motivoCancelamento 
+        }),
       });
       
-      if (res.ok) {
-        setPedidos(pedidos.map(p => p.id === pedidoId ? { ...p, status: "cancelado", motivo_cancelamento: motivo } : p));
-      } else {
-        alert("Erro ao cancelar o pedido no servidor.");
-      }
+      if (!res.ok) throw new Error();
     } catch (err) {
-      alert("Erro de rede ao cancelar pedido");
+      console.error("Erro ao atualizar status:", err);
+      setPedidos(pedidosOriginais);
+      alert("Ops! Não foi possível atualizar o status. Tente novamente.");
     }
   };
 
-  const handleCopiarPedido = (pedido) => {
-    const numPedido = pedido.numero_pedido_parceiro || pedido.id;
-    let texto = `*Pedido #${numPedido}*\n`;
-    texto += `Cliente: ${pedido.cliente_nome}\n`;
-    texto += `Tipo: ${pedido.tipo_entrega === "delivery" ? "Delivery (Entrega)" : "Retirada"}\n`;
+  const copiarPedidoAoClipboard = (pedido) => {
+    // Se o número sequencial do parceiro não existir (pedidos antigos), usa o ID padrão
+    const numeroPedido = pedido.numero_pedido_parceiro || pedido.id;
+    
+    let msg = `*Novo Pedido #${numeroPedido} - ${loja.nome}*\n`;
+    msg += `----------------------------------------\n`;
+    msg += `*Cliente:* ${pedido.cliente_nome || "Não informado"}\n`;
+    msg += `*Contato:* ${formatarTelefone(pedido.cliente_whatsapp) || "Não informado"}\n`;
+    msg += `*Tipo:* ${pedido.tipo_entrega === "delivery" ? "Delivery" : "Retirada"}\n`;
     
     if (pedido.tipo_entrega === "delivery") {
-      texto += `Endereço: ${pedido.endereco_entrega}\n`;
-      if (pedido.ponto_referencia) texto += `Ref: ${pedido.ponto_referencia}\n`;
+      msg += `*Endereço:* ${pedido.endereco_entrega || "Não informado"}\n`;
+      if (pedido.ponto_referencia) {
+        msg += `*Ref:* ${pedido.ponto_referencia}\n`;
+      }
     }
     
-    texto += `Pagamento: ${pedido.forma_pagamento?.toUpperCase() || "NÃO INFORMADO"}\n`;
+    const pagamento = pedido.forma_pagamento ? pedido.forma_pagamento.toUpperCase() : "NÃO INFORMADO";
+    msg += `*Pagamento:* ${pagamento}\n`;
+    
     if (pedido.forma_pagamento === "dinheiro" && pedido.troco_para) {
-      texto += `Troco Para: R$ ${parseFloat(pedido.troco_para).toFixed(2)}\n`;
+      msg += `*Troco Para:* R$ ${parseFloat(pedido.troco_para).toFixed(2)}\n`;
     }
-    if (pedido.observacoes) texto += `Obs Geral: ${pedido.observacoes}\n`;
     
-    texto += `--------------------\n`;
-    pedido.itens_pedido?.forEach(it => {
-      texto += `${it.quantidade}x ${it.produtos?.nome || it.produto_nome || "Item"}\n`;
-      if (it.observacao) texto += `  Obs Item: ${it.observacao}\n`;
+    // No seu banco a coluna se chama 'observacoes'
+    if (pedido.observacoes) {
+      msg += `*Obs. Pedido:* ${pedido.observacoes}\n`;
+    }
+    
+    msg += `----------------------------------------\n\n`;
+    msg += `*Itens:*\n`;
+    
+    const itens = pedido.itens_pedido || [];
+    itens.forEach(item => {
+      // Pega o nome vindo do relacionamento que ajustamos no Passo 1
+      const nomeProduto = item.produtos?.nome || "Item";
+      const precoUnitario = parseFloat(item.preco_unitario || 0);
+      const subtotalItem = precoUnitario * parseInt(item.quantidade || 1);
+      
+      msg += `* ${item.quantidade}x _${nomeProduto}_ - R$ ${subtotalItem.toFixed(2)}`;
+      
+      // Resgata a observação individual do lanche (ex: sem cebola)
+      if (item.observacao && item.observacao.trim() !== "") {
+        msg += ` (${item.observacao.trim()})`;
+      }
+      msg += `\n`;
     });
-    texto += `--------------------\n`;
-    texto += `Total: R$ ${parseFloat(pedido.total).toFixed(2)}`;
     
-    navigator.clipboard.writeText(texto);
-    alert("Pedido formatado copiado com sucesso!");
+    msg += `\n----------------------------------------\n`;
+    if (pedido.tipo_entrega === "delivery") {
+      msg += `*Subtotal:* R$ ${parseFloat(pedido.subtotal || 0).toFixed(2)}\n`;
+      msg += `*Taxa de Entrega:* R$ ${parseFloat(pedido.taxa_entrega || 0).toFixed(2)}\n`;
+    }
+    msg += `*Total Geral:* R$ ${parseFloat(pedido.total || 0).toFixed(2)}\n`;
+    msg += `----------------------------------------\n`;
+    msg += `_Gerado via Plataforma Boca de Rua._`;
+
+    // Copia para a área de transferência do dispositivo (Android / PC)
+    navigator.clipboard.writeText(msg)
+      .then(() => {
+        // Feedback rápido na tela (muito importante para telas touch)
+        alert(`Pedido #${numeroPedido} copiado com sucesso! 🎉`);
+      })
+      .catch(err => {
+        console.error("Erro ao copiar: ", err);
+      });
+  };
+
+  const handleLojaInputChange = (e) => {
+    const { name, value } = e.target;
+    const valorFinal = name === "telefone_whatsapp" ? formatarTelefone(value) : value;
+    setLojaForm(prev => ({ ...prev, [name]: valorFinal }));
+  };
+
+  // 1. CRIAR OU EDITAR CATEGORIA (Salvar)
+  const handleSalvarCategoria = async (e) => {
+    e.preventDefault();
+    if (!novaCategoria.trim()) return;
+
+    const estabelecimentoId = loja?.id || 1;
+
+    if (categoriaEditando) {
+      const res = await fetch("/api/parceiro/categorias", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoriaId: categoriaEditando.id, nome: novaCategoria }),
+      });
+      if (res.ok) {
+        setCategoriaEditando(null);
+        setNovaCategoria("");
+        buscarCategorias();
+      }
+    } else {
+      const res = await fetch("/api/parceiro/categorias", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estabelecimentoId, nome: novaCategoria, ordem: categorias.length + 1 }),
+      });
+      if (res.ok) {
+        setNovaCategoria("");
+        buscarCategorias();
+      }
+    }
+  };
+
+  // 2. DELETAR CATEGORIA
+  const handleDeletarCategoria = async (id) => {
+    if (!confirm("Tem certeza que deseja deletar esta categoria?")) return;
+    const res = await fetch(`/api/parceiro/categorias?categoriaId=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      // Se a categoria deletada era a que estava sendo editada, reseta o formulário
+      if (categoriaEditando && categoriaEditando.id === id) {
+        setCategoriaEditando(null);
+        setNovaCategoria("");
+      }
+      // Se a categoria deletada estava selecionada no formulário de produtos, limpa o campo
+      if (form.categoriaId === id.toString()) {
+        setForm(prev => ({ ...prev, categoriaId: "" }));
+      }
+      buscarCategorias();
+    } else {
+      const err = await res.json();
+      alert(err.error || "Erro ao deletar categoria");
+    }
   };
 
   const handleImprimirPedido = (pedido) => {
@@ -312,10 +482,9 @@ export default function ParceiroDashboard() {
   const getStatusBadge = (status) => {
     const styles = {
       pendente: "bg-amber-950 text-amber-400 border-amber-800",
-      aceito: "bg-blue-950 text-blue-400 border-blue-800",
-      em_preparacao: "bg-indigo-950 text-indigo-400 border-indigo-800",
+      confirmado: "bg-blue-950 text-blue-400 border-blue-800",
       saiu_entrega: "bg-purple-950 text-purple-400 border-purple-800",
-      entregue: "bg-emerald-950 text-emerald-400 border-emerald-800",
+      finalizado: "bg-emerald-950 text-emerald-400 border-emerald-800",
       cancelado: "bg-rose-950 text-rose-400 border-rose-800"
     };
     return styles[status] || "bg-gray-800 text-gray-400 border-gray-700";
@@ -324,6 +493,12 @@ export default function ParceiroDashboard() {
   const handleLogout = () => {
     localStorage.removeItem("@bocaderua:user");
     router.push("/login");
+  };
+
+  // Exemplo de áudio local se o app estiver aberto em primeiro plano
+  const tocarAudioLocal = () => {
+    const audio = new Audio('/sons/alerta-novo-pedido.mp3');
+    audio.play().catch(e => console.log("Aguardando interação para tocar áudio local:", e));
   };
 
   if (loading) {
@@ -358,6 +533,7 @@ export default function ParceiroDashboard() {
             <p className="text-center">--------------------------------</p>
             <p className="font-bold">PEDIDO #{pedidoParaImpressao.numero_pedido_parceiro || pedidoParaImpressao.id}</p>
             <p>Cliente: {pedidoParaImpressao.cliente_nome}</p>
+            <p>WhatsApp: {formatarTelefone(pedidoParaImpressao.cliente_whatsapp)}</p>
             <p>Data: {new Date(pedidoParaImpressao.created_at || pedidoParaImpressao.criado_em).toLocaleString()}</p>
             <p>Entrega: {pedidoParaImpressao.tipo_entrega.toUpperCase()}</p>
             {pedidoParaImpressao.tipo_entrega === "delivery" && <p>Endereço: {pedidoParaImpressao.endereco_entrega}</p>}
@@ -456,7 +632,7 @@ export default function ParceiroDashboard() {
                       <div className="bg-[#111827] rounded-lg p-3 space-y-2">
                         {p.itens_pedido?.map((it, i) => (
                           <div key={i} className="text-xs">
-                            <p className="text-gray-200 font-bold">{it.whitespace || it.quantidade}x {it.produtos?.nome || it.produto_nome || "Item"}</p>
+                            <p className="text-gray-200 font-bold">{it.quantidade}x {it.produtos?.nome || it.produto_nome || "Item"}</p>
                             {it.observacao && <p className="text-[10px] text-amber-500 italic ml-2">Obs Item: {it.observacao}</p>}
                           </div>
                         ))}
@@ -483,39 +659,54 @@ export default function ParceiroDashboard() {
                       </div>
                     </div>
 
-                    {/* Botões de Ação */}
-                    <div className="grid grid-cols-2 gap-2 mt-4">
-                      {p.status !== 'entregue' && p.status !== 'cancelado' && (
+                    {/* ÁREA DE AÇÕES TÁTEIS: Focada em Android Touch */}
+                    <div className="mt-4 pt-4 border-t border-[#374151]/50 flex flex-col gap-3">
+                      
+                      {/* Botão de Próximo Status (Grande e Chamativo) */}
+                      {p.status !== 'finalizado' && p.status !== 'cancelado' && (
                         <button 
-                          onClick={() => handleUpdateStatus(p.id, p.status)}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold py-2 rounded uppercase"
+                          onClick={() => {
+                            const statusFlow = ['pendente', 'confirmado', 'saiu_entrega', 'finalizado'];
+                            const idx = statusFlow.indexOf(p.status);
+                            const proximo = statusFlow[idx + 1];
+                            if (proximo) alterarStatusPedido(p.id, proximo);
+                          }}
+                          className="w-full min-h-[52px] bg-emerald-600 active:bg-emerald-700 active:scale-[0.98] text-white font-black rounded-xl transition-all flex items-center justify-center text-sm uppercase tracking-wide shadow-lg shadow-emerald-900/20"
                         >
-                          {p.status === 'pendente' ? 'Aceitar' : 'Próximo Status'}
+                          {p.status === 'pendente' && "👨‍🍳 Confirmar Pedido"}
+                          {p.status === 'confirmado' && "🛵 Despachar para Entrega"}
+                          {p.status === 'saiu_entrega' && "✅ Finalizar Pedido"}
                         </button>
                       )}
                       
-                      <button 
-                        onClick={() => handleImprimirPedido(p)}
-                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold py-2 rounded uppercase border border-[#374151]"
-                      >
-                        Imprimir 🖨️
-                      </button>
-
-                      <button 
-                        onClick={() => handleCopiarPedido(p)}
-                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold py-2 rounded uppercase border border-[#374151]"
-                      >
-                        Copiar 📋
-                      </button>
-
-                      {['pendente', 'aceito', 'em_preparacao'].includes(p.status) && (
+                      {/* Botões Secundários */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <button 
-                          onClick={() => handleCancelarPedido(p.id)}
-                          className="bg-rose-950/20 hover:bg-rose-950 text-rose-500 text-[10px] font-bold py-2 rounded uppercase border border-rose-900/50"
+                          onClick={() => handleImprimirPedido(p)}
+                          className="min-h-[44px] bg-[#111827] hover:bg-gray-800 text-gray-300 text-[10px] font-bold py-2 rounded-lg uppercase border border-[#374151] flex items-center justify-center gap-1 active:scale-95"
                         >
-                          Cancelar
+                          Imprimir 🖨️
                         </button>
-                      )}
+
+                        <button 
+                          onClick={() => copiarPedidoAoClipboard(p)}
+                          className="min-h-[44px] bg-[#111827] hover:bg-gray-800 text-gray-300 text-[10px] font-bold py-2 rounded-lg uppercase border border-[#374151] flex items-center justify-center gap-1 active:scale-95"
+                        >
+                          Copiar 📋
+                        </button>
+
+                        {['pendente', 'confirmado', 'saiu_entrega'].includes(p.status) && (
+                          <button 
+                            onClick={() => {
+                              const motivo = prompt("Motivo do cancelamento (ex: Falta de insumos):");
+                              if (motivo) alterarStatusPedido(p.id, "cancelado", motivo);
+                            }}
+                            className="min-h-[44px] bg-rose-950/20 hover:bg-rose-950 text-rose-500 text-[10px] font-bold py-2 rounded-lg uppercase border border-rose-900/50 flex items-center justify-center active:scale-95"
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                      </div>
                     </div>
                     
                     {p.status === 'cancelado' && p.motivo_cancelamento && (
@@ -545,8 +736,8 @@ export default function ParceiroDashboard() {
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link do Avatar (Logo)</label>
                     <input 
                       type="url" 
-                      value={lojaForm.avatar_url || ""} 
-                      onChange={(e) => setLojaForm({...lojaForm, avatar_url: e.target.value})} 
+                      value={lojaForm.logo_url || ""} 
+                      onChange={(e) => setLojaForm({...lojaForm, logo_url: e.target.value})} 
                       className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
                       placeholder="https://..." 
                     />
@@ -565,8 +756,9 @@ export default function ParceiroDashboard() {
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">WhatsApp (Número)</label>
                     <input 
                       type="text" 
-                      value={lojaForm.telefone || ""} 
-                      onChange={(e) => setLojaForm({...lojaForm, telefone: e.target.value})} 
+                      name="telefone_whatsapp"
+                      value={lojaForm.telefone_whatsapp || ""} 
+                      onChange={handleLojaInputChange}
                       className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
                       placeholder="91988887777" 
                     />
@@ -585,8 +777,38 @@ export default function ParceiroDashboard() {
               </form>
             </div>
             
-            {/* Formulário de Cadastro / Edição */}
-            <div className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl h-fit sticky top-6">
+             {/* Coluna Lateral: Categorias e Produtos */}
+            <div className="space-y-6 h-fit lg:sticky lg:top-24">
+              {/* GESTÃO DE CATEGORIAS */}
+              <div className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl shadow-xl">
+                <h3 className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-4 flex items-center gap-2">📂 Categorias</h3>
+                <form onSubmit={handleSalvarCategoria} className="flex gap-2 mb-4">
+                  <input
+                    type="text"
+                    placeholder="Nova categoria..."
+                    value={novaCategoria}
+                    onChange={(e) => setNovaCategoria(e.target.value)}
+                    className="flex-1 bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-3 py-2 rounded uppercase transition-colors shadow-lg">
+                    {categoriaEditando ? "Salvar" : "Add"}
+                  </button>
+                </form>
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {categorias.map((cat) => (
+                    <div key={cat.id} className="flex items-center justify-between bg-[#111827] p-2 rounded border border-[#374151] text-[11px]">
+                      <span className="text-gray-300 font-medium">{cat.nome}</span>
+                      <div className="flex gap-2">
+                        <button onClick={() => { setCategoriaEditando(cat); setNovaCategoria(cat.nome); }} className="text-emerald-500 hover:text-emerald-400 font-bold uppercase text-[9px]">Editar</button>
+                        <button onClick={() => handleDeletarCategoria(cat.id)} className="text-rose-500 hover:text-rose-400 font-bold uppercase text-[9px]">Excluir</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Formulário de Produto */}
+              <div className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl shadow-xl">
               <h2 className="text-base font-black text-white mb-4 flex items-center gap-2">
                 {editandoId ? "📝 Editando Item do Cardápio" : "✨ Novo Item no Cardápio"}
               </h2>
@@ -606,11 +828,16 @@ export default function ParceiroDashboard() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Categoria</label>
-                    <select value={form.categoriaId} onChange={(e) => setForm({...form, categoriaId: e.target.value})} className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm text-gray-200">
-                      <option value="1">🍔 Lanches / Salgados</option>
-                      <option value="2">🥤 Bebidas</option>
-                      <option value="3">🎁 Combos</option>
-                      <option value="4">🍟 Porções</option>
+                    <select 
+                      value={form.categoriaId} 
+                      onChange={(e) => setForm({...form, categoriaId: e.target.value})} 
+                      className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm text-gray-200" >
+                      <option value="">Selecione uma categoria</option>
+                      {categorias.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.nome}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -643,6 +870,7 @@ export default function ParceiroDashboard() {
                   )}
                 </div>
               </form>
+            </div>
             </div>
 
             {/* Listagem de Itens Cadastrados */}

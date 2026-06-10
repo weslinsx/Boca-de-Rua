@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { formatarTelefone } from "@/app/utils/whatsapp";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -198,7 +199,7 @@ export default function AdminDashboard() {
                       <div className="text-white">{loja.usuarios?.nome}</div>
                       <div className="text-xs text-gray-400">{loja.usuarios?.email}</div>
                     </td>
-                    <td className="p-4 text-gray-300 font-mono text-xs">{loja.telefone_whatsapp}</td>
+                    <td className="p-4 text-gray-300 font-mono text-xs">{formatarTelefone(loja.telefone_whatsapp)}</td>
                     <td className="p-4">
                       <span className={`px-2 py-1 rounded-full text-xs font-black uppercase tracking-wide ${
                         loja.status === "ativo" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" :

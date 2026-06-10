@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 export async function PUT(request) {
   try {
     const body = await request.json();
-    const { id, avatar_url, banner_url, telefone, endereco } = body;
+    const { id, logo_url, banner_url, telefone_whatsapp, endereco } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -17,9 +17,9 @@ export async function PUT(request) {
     const { data, error } = await supabase
       .from("estabelecimentos")
       .update({
-        avatar_url: avatar_url || null,
+        logo_url: logo_url || null,
         banner_url: banner_url || null,
-        telefone: telefone || null,
+        telefone_whatsapp: telefone_whatsapp || null,
         endereco: endereco || null,
         atualizado_em: new Date(),
       })

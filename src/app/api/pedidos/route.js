@@ -1,6 +1,7 @@
 // src/app/api/pedidos/route.js
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin"; // Importar o cliente admin
 
 // =========================================================================
 // 1. FUNÇÃO GET: Listar os pedidos no Painel (Trazendo os itens juntos)
@@ -10,15 +11,28 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const estabelecimentoId = searchParams.get("estabelecimentoId");
 
-    // Já puxa a cabeça do pedido E a lista de itens associada a ele
-    let query = supabase.from("pedidos").select("*, itens_pedido(*)");
-
-    if (estabelecimentoId) {
-      query = query.eq("estabelecimento_id", parseInt(estabelecimentoId));
+    if (!estabelecimentoId) {
+      return NextResponse.json({ error: "estabelecimentoId é obrigatório" }, { status: 400 });
     }
 
-    // Ordena para que os novos pedidos caiam direto no topo da lista
-    const { data: pedidos, error } = await query.order("id", { ascending: false });
+    // CORRIGIDO: Adicionado 'observacao_item:observacao' para garantir a leitura no front-end
+    const { data: pedidos, error } = await supabase
+      .from("pedidos")
+      .select(`
+        *,
+        itens_pedido (
+          id,
+          quantidade,
+          preco_unitario,
+          observacao,
+          observacao_item:observacao,
+          produtos (
+            nome
+          )
+        )
+      `)
+      .eq("estabelecimento_id", parseInt(estabelecimentoId))
+      .order("id", { ascending: false });
 
     if (error) throw error;
 
@@ -37,14 +51,12 @@ export async function POST(request) {
   try {
     const body = await request.json();
     
-    // Mapeamento flexível: aceita tanto o padrão camelCase do React quanto snake_case do banco
     const estabelecimentoId = body.estabelecimentoId || body.estabelecimento_id;
     const clienteNome = body.nome || body.clienteNome || body.cliente_nome;
     const clienteWhatsapp = body.whatsapp || body.clienteWhatsapp || body.cliente_whatsapp;
     const tipoEntrega = body.tipoEntrega || body.tipo_entrega;
     const enderecoEntrega = body.endereco || body.enderecoEntrega || body.endereco_entrega;
     
-    // Novos campos adicionados na migração das tabelas
     const pontoReferencia = body.pontoReferencia || body.ponto_referencia || null;
     const observacoesGerais = body.observacoesGerais || body.observacoes || null;
     const formaPagamento = body.formaPagamento || body.forma_pagamento || "pix";
@@ -55,16 +67,13 @@ export async function POST(request) {
     const total = body.total;
     const itens = body.itens || [];
 
-    // Validação de segurança básica
     if (!estabelecimentoId || !clienteNome || !clienteWhatsapp || !tipoEntrega || itens.length === 0) {
       return NextResponse.json({ error: "Dados obrigatórios ausentes." }, { status: 400 });
     }
 
-    // Passo 2-B: Sanitização do número do WhatsApp do cliente
     const whatsappLimpo = clienteWhatsapp.replace(/\D/g, "");
 
-    // Inserir a cabeça do pedido (A coluna numero_pedido_parceiro roda sozinha via TRIGGER)
-    // Inserir a cabeça do pedido
+    // Inserir o cabeçalho do pedido
     const { data: pedidoSalvo, error: errorPedido } = await supabase
       .from("pedidos")
       .insert([
@@ -77,7 +86,6 @@ export async function POST(request) {
           ponto_referencia: tipoEntrega === "delivery" ? pontoReferencia : null,
           observacoes: observacoesGerais,
           forma_pagamento: formaPagamento,
-          // Se não for dinheiro, grava null. Se for, garante que vira número ou 0
           troco_para: formaPagamento === "dinheiro" ? parseFloat(trocoPara || 0) : null,
           subtotal: parseFloat(subtotal || 0),
           taxa_entrega: parseFloat(taxaEntrega || 0),
@@ -90,13 +98,13 @@ export async function POST(request) {
 
     if (errorPedido) throw errorPedido;
 
-    // Preparar e injetar em lote os itens vinculados a essa cabeça de pedido
+    // Preparar e injetar em lote os itens vinculados a esse pedido
     const itensParaInserir = itens.map((item) => ({
       pedido_id: pedidoSalvo.id,
       produto_id: item.id,
       quantidade: parseInt(item.quantidade),
       preco_unitario: parseFloat(item.preco),
-      observacao: item.observacao || null // Observação individual do produto no carrinho
+      observacao: item.observacao || null
     }));
 
     const { error: errorItens } = await supabase
@@ -105,10 +113,21 @@ export async function POST(request) {
 
     if (errorItens) throw errorItens;
 
+    let numeroFinal = pedidoSalvo.numero_pedido_parceiro;
+    
+    if (!numeroFinal) {
+      const { data: atualizado } = await supabase
+        .from("pedidos")
+        .select("numero_pedido_parceiro")
+        .eq("id", pedidoSalvo.id)
+        .single();
+      if (atualizado) numeroFinal = atualizado.numero_pedido_parceiro;
+    }
+
     return NextResponse.json({ 
       success: true, 
       pedidoId: pedidoSalvo.id,
-      numeroPedidoParceiro: pedidoSalvo.numero_pedido_parceiro 
+      numeroPedidoParceiro: numeroFinal 
     }, { status: 201 });
 
   } catch (error) {
@@ -123,30 +142,42 @@ export async function POST(request) {
 export async function PATCH(request) {
   try {
     const body = await request.json();
-    const { pedidoId, status, motivoCancelamento } = body;
+    
+    // 1. Suporta tanto camelCase quanto snake_case vindo do front-end
+    const pedidoId = body.pedidoId || body.pedido_id;
+    const status = body.status || body.status_pedido;
+    const motivoCancelamento = body.motivoCancelamento || body.motivo_cancelamento;
 
     if (!pedidoId) {
       return NextResponse.json({ error: "O ID do pedido é obrigatório." }, { status: 400 });
     }
 
-    // Monta o objeto dinamicamente dependendo da ação disparada no clique do painel
     const dadosAtualizacao = {};
     if (status) dadosAtualizacao.status = status;
     if (motivoCancelamento) dadosAtualizacao.motivo_cancelamento = motivoCancelamento;
 
-    const { data: pedidoAtualizado, error } = await supabase
+    // 2. Evita erro de sintaxe SQL se o front não enviar nenhum campo válido
+    if (Object.keys(dadosAtualizacao).length === 0) {
+      return NextResponse.json({ error: "Nenhum campo válido enviado para atualização." }, { status: 400 });
+    }
+
+    // 3. Garante o parseInt no ID para o Postgres não reclamar do tipo de dado
+    const { data: pedidoAtualizado, error } = await supabaseAdmin 
       .from("pedidos")
       .update(dadosAtualizacao)
-      .eq("id", pedidoId)
-      .select()
-      .single();
+      .eq("id", parseInt(pedidoId))
+      .select();
 
-    if (error) throw error;
+    if (error) throw new Error(error.message);
 
     return NextResponse.json({ success: true, pedido: pedidoAtualizado }, { status: 200 });
 
   } catch (error) {
-    console.error("Erro no PATCH /api/pedidos:", error.message);
-    return NextResponse.json({ error: "Falha interna ao atualizar o status do pedido." }, { status: 500 });
+    // Log detalhado para o desenvolvedor no terminal
+    console.error("❌ Erro no PATCH /api/pedidos:", error.message);
+    return NextResponse.json({ 
+      error: "Erro no banco de dados.", 
+      detalhe: error.message 
+    }, { status: 500 });
   }
 }

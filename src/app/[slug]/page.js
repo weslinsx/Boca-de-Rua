@@ -19,7 +19,14 @@ async function getCardapioDados(slug) {
     .eq("estabelecimento_id", loja.id)
     .eq("disponivel", true);
 
-  return { loja, produtos: produtos || [] };
+  // Buscar as categorias para este estabelecimento
+  const { data: categorias, error: errCat } = await supabase
+    .from("categorias")
+    .select("*")
+    .eq("estabelecimento_id", loja.id)
+    .order("ordem", { ascending: true });
+
+  return { loja, produtos: produtos || [], categorias: categorias || [] };
 }
 
 export default async function CardapioPublico({ params }) {
@@ -32,7 +39,7 @@ export default async function CardapioPublico({ params }) {
 
   return (
     <CartProvider>
-      <CardapioClient loja={dados.loja} produtos={dados.produtos} />
+      <CardapioClient loja={dados.loja} produtos={dados.produtos} categorias={dados.categorias} />
     </CartProvider>
   );
 }

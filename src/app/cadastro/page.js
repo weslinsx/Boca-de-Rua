@@ -3,6 +3,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { formatarTelefone } from "@/app/utils/whatsapp";
 
 function CadastroForm() {
   const router = useRouter();

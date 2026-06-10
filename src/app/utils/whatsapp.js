@@ -1,6 +1,22 @@
 // src/app/utils/whatsapp.js
-export function gerarLinkWhatsApp(loja, pedidoId, formData, cart, precoTotal, taxaEntrega, totalGeral) {
-  const telefoneLimpo = (loja.telefone || loja.telefone_whatsapp)?.replace(/\D/g, "") || "";
+export function formatarTelefone(v) {
+  if (!v) return "";
+  v = v.replace(/\D/g, ""); // Remove tudo que não é número
+  v = v.slice(0, 11); // Limita a 11 dígitos (DDD + 9 + Número)
+  if (v.length > 10) {
+    return `(${v.slice(0, 2)}) ${v.slice(2, 7)}-${v.slice(7)}`;
+  } else if (v.length > 6) {
+    return `(${v.slice(0, 2)}) ${v.slice(2, 6)}-${v.slice(6)}`;
+  } else if (v.length > 2) {
+    return `(${v.slice(0, 2)}) ${v.slice(2)}`;
+  } else if (v.length > 0) {
+    return `(${v}`;
+  }
+  return v;
+}
+
+export function gerarLinkWhatsApp(loja, pedidoId, formData, cart, observacoes, precoTotal, taxaEntrega, totalGeral) {
+  const telefoneLimpo = (loja.telefone_whatsapp)?.replace(/\D/g, "") || "";
   
   if (!telefoneLimpo) {
     console.error("Erro: Estabelecimento sem telefone cadastrado.");
@@ -12,7 +28,7 @@ export function gerarLinkWhatsApp(loja, pedidoId, formData, cart, precoTotal, ta
   let msg = `*Novo Pedido #${pedidoId} - ${loja.nome}*\n`;
   msg += `----------------------------------------\n`;
   msg += `*Cliente:* ${formData.nome}\n`;
-  msg += `*Contato:* ${formData.whatsapp}\n`;
+  msg += `*Contato:* ${formatarTelefone(formData.whatsapp)}\n`;
   msg += `*Tipo:* ${formData.tipoEntrega === "delivery" ? "Delivery" : "Retirada"}\n`;
   
   if (formData.tipoEntrega === "delivery") {
@@ -33,15 +49,20 @@ export function gerarLinkWhatsApp(loja, pedidoId, formData, cart, precoTotal, ta
   msg += `*Itens:*\n`;
   
   cart.forEach(item => {
-    msg += `- ${item.quantidade}x _${item.nome}_ - R$ ${(parseFloat(item.preco || 0) * item.quantidade).toFixed(2)}\n`;
-    // Puxa a observação direto do objeto do item do carrinho
-    if (item.observacao && item.observacao.trim() !== "") {
-      msg += `  > *Obs:* ${item.observacao.trim()}\n`;
+    const nomeProduto = item.nome || "Item";
+    const precoUnitario = parseFloat(item.preco || 0);
+    const subtotalItem = precoUnitario * parseInt(item.quantidade || 1);
+    const obsItem = observacoes[item.id] || item.observacao;
+
+    msg += `* ${item.quantidade}x _${nomeProduto}_ - R$ ${subtotalItem.toFixed(2)}`;
+    
+    if (obsItem && obsItem.trim() !== "") {
+      msg += ` (${obsItem.trim()})`;
     }
+    msg += `\n`;
   });
   
   msg += `\n----------------------------------------\n`;
-  // Mostra o detalhamento de valores se for delivery
   if (formData.tipoEntrega === "delivery") {
     msg += `*Subtotal:* R$ ${parseFloat(precoTotal || 0).toFixed(2)}\n`;
     msg += `*Taxa de Entrega:* R$ ${parseFloat(taxaEntrega || 0).toFixed(2)}\n`;
