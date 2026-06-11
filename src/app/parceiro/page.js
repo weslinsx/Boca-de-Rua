@@ -105,6 +105,28 @@ export default function ParceiroDashboard() {
     return () => clearInterval(intervalo);
   }, [buscarPedidos, loja?.id, viewPrincipal]);
 
+    // Função para avisar cliente sobre entrega no WhatsApp
+  const avisarEntregaWhatsApp = useCallback((p) => {
+    if (!p || !p.cliente_whatsapp) return;
+    
+    // Remove qualquer caractere que não seja número (parênteses, espaços, traços)
+    const whatsappLimpo = p.cliente_whatsapp.replace(/\D/g, "");
+    
+    // Texto estilizado com negritos (*) e quebras de linha (\n) para melhor legibilidade
+    let textoMensagem = `*Boa notícia, ${p.cliente_nome}!* \n\n`;
+    textoMensagem += `Seu pedido *#${p.numero_pedido_parceiro || p.id}* no *${loja?.nome}* acabou de sair para entrega! \n\n`;
+    textoMensagem += `Logo o entregador estará aí. Por favor, fique atento para recebê-lo!`;
+    
+    const params = new URLSearchParams({ text: textoMensagem });
+    
+    // CORREÇÃO: Removidos os caracteres < > que quebravam o link no window.open
+    const zapUrl = `https://wa.me/55${whatsappLimpo}?${params.toString()}`;
+    
+    window.open(zapUrl, '_blank');
+  }, [loja?.nome]);
+
+
+
   // Filtros de Pedidos
   const pedidosPendentes = pedidos.filter(p => p.status === 'pendente');
   const pedidosEmPreparo = pedidos.filter(p => ['confirmado', 'saiu_entrega'].includes(p.status));
@@ -327,17 +349,23 @@ export default function ParceiroDashboard() {
     ));
 
     try {
+      // Automação: Sugestão de aviso ao cliente via WhatsApp se for despacho
+           if (novoStatus === 'saiu_entrega') {
+        const p = pedidos.find(item => item.id === pedidoId);
+        avisarEntregaWhatsApp(p);
+      }
+
       const res = await fetch("/api/pedidos", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pedidoId, 
-          status: novoStatus, 
+          pedidoId,
+          status: novoStatus,
           motivoCancelamento,
-          motivo_cancelamento: motivoCancelamento 
+          motivo_cancelamento: motivoCancelamento
         }),
       });
-      
+
       if (!res.ok) throw new Error();
     } catch (err) {
       console.error("Erro ao atualizar status:", err);
@@ -345,6 +373,7 @@ export default function ParceiroDashboard() {
       alert("Ops! Não foi possível atualizar o status. Tente novamente.");
     }
   };
+
 
   const copiarPedidoAoClipboard = (pedido) => {
     // Se o número sequencial do parceiro não existir (pedidos antigos), usa o ID padrão
@@ -490,6 +519,18 @@ export default function ParceiroDashboard() {
     return styles[status] || "bg-gray-800 text-gray-400 border-gray-700";
   };
 
+  // Mapeamento Amigável de Status para o Card
+  const getStatusLabel = (status) => {
+    const labels = {
+      pendente: "Novo Pedido",
+      confirmado: "Em Preparo",
+      saiu_entrega: "Em Rota de Entrega",
+      finalizado: "Concluído",
+      cancelado: "Cancelado"
+    };
+    return labels[status] || status.replace("_", " ");
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("@bocaderua:user");
     router.push("/login");
@@ -503,14 +544,14 @@ export default function ParceiroDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#111827] flex items-center justify-center">
-        <p className="text-emerald-400 font-bold text-lg animate-pulse">Carregando cardápio da loja...</p>
+      <div className="min-h-screen bg-[#070a13] flex items-center justify-center font-sans">
+        <p className="text-amber-500 font-black text-[10px] uppercase tracking-[0.3em] animate-pulse">Boca de Rua • Parceiro</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#111827] text-white">
+    <div className="min-h-screen bg-[#070a13] text-[#f9fafb] font-sans antialiased overflow-x-hidden selection:bg-amber-500/30 w-full relative">
       {/* CSS Nativo para Impressão Térmica */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
@@ -556,48 +597,54 @@ export default function ParceiroDashboard() {
         )}
       </div>
 
+      {/* GLOWS ATMOSFÉRICOS DE FUNDO */}
+      <div className="absolute -top-40 -left-40 w-96 h-96 bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-amber-500/5 rounded-full blur-[120px] pointer-events-none" />
+
       {/* Header */}
-      <header className="bg-[#1f2937] border-b border-[#374151] px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4 sticky top-0 z-30">
-        <div>
-          <span className="bg-emerald-950 text-emerald-400 text-[10px] font-black px-2 py-0.5 rounded border border-emerald-800 uppercase tracking-wider">
-            Painel Operacional
-          </span>
-          <h1 className="text-xl font-bold text-white mt-1">{loja?.nome} 🏪</h1>
-          <p className="text-xs text-gray-400">Responsável: <span className="text-gray-200">{user?.nome}</span> | Link: /<span className="text-emerald-400 font-mono">{loja?.slug}</span></p>
-        </div>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => setViewPrincipal("pedidos")}
-            className={`px-4 py-2 rounded text-xs font-bold transition-all border ${viewPrincipal === 'pedidos' ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-gray-800 border-[#374151] text-gray-400'}`}
-          >
-            🛒 Pedidos {pedidosPendentes.length > 0 && <span className="ml-1 bg-white text-emerald-700 px-1.5 rounded-full text-[10px]">{pedidosPendentes.length}</span>}
-          </button>
-          <button 
-            onClick={() => setViewPrincipal("cardapio")}
-            className={`px-4 py-2 rounded text-xs font-bold transition-all border ${viewPrincipal === 'cardapio' ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-gray-800 border-[#374151] text-gray-400'}`}
-          >
-            🍔 Cardápio
-          </button>
-          <button onClick={handleLogout} className="bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-xs px-4 py-2 rounded transition-colors border border-[#374151]">
-            Sair
-          </button>
+      <header className="bg-[#121826]/80 backdrop-blur-md border-b border-gray-900/60 px-6 py-4 sticky top-0 z-50 shadow-2xl w-full">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div>
+            <span className="bg-amber-950/40 text-amber-500 text-[9px] font-black px-2 py-0.5 rounded border border-amber-900/40 uppercase tracking-widest">
+              Painel Operacional
+            </span>
+            <h1 className="text-xl font-black text-white mt-1 uppercase tracking-tight">{loja?.nome} 🏪</h1>
+            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Responsável: <span className="text-gray-300">{user?.nome}</span></p>
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setViewPrincipal("pedidos")}
+              className={`h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border touch-manipulation ${viewPrincipal === 'pedidos' ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/20' : 'bg-gray-950 border-gray-800 text-gray-500'}`}
+            >
+              Pedidos {pedidosPendentes.length > 0 && <span className="ml-1 bg-white text-amber-700 px-1.5 rounded-full text-[10px]">{pedidosPendentes.length}</span>}
+            </button>
+            <button 
+              onClick={() => setViewPrincipal("cardapio")}
+              className={`h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border touch-manipulation ${viewPrincipal === 'cardapio' ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/20' : 'bg-gray-950 border-gray-800 text-gray-500'}`}
+            >
+              Cardápio
+            </button>
+            <button onClick={handleLogout} className="h-11 px-5 bg-gray-950 border border-gray-800 hover:border-rose-900/50 text-rose-500 text-[10px] font-black uppercase rounded-2xl transition-all active:scale-95 touch-manipulation">
+              Sair
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="p-6 max-w-6xl mx-auto">
+      <main className="p-4 md:p-6 max-w-7xl mx-auto relative z-10 space-y-6">
         {viewPrincipal === "pedidos" ? (
           <div className="space-y-6">
             {/* Navegação de Pedidos */}
-            <div className="flex gap-4 border-b border-[#374151] pb-2 overflow-x-auto">
+            <div className="flex gap-4 border-b border-gray-900 pb-2 overflow-x-auto no-scrollbar">
               {[
-                { id: 'pendentes', label: 'Novos', count: pedidosPendentes.length },
+                { id: 'pendentes', label: 'Entrada', count: pedidosPendentes.length },
                 { id: 'preparo', label: 'Em Preparo/Entrega', count: pedidosEmPreparo.length },
                 { id: 'historico', label: 'Histórico', count: null }
               ].map(tab => (
                 <button
                   key={tab.id}
                   onClick={() => setAbaPedidos(tab.id)}
-                  className={`pb-2 px-1 text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${abaPedidos === tab.id ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-gray-500'}`}
+                  className={`pb-2 px-1 text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${abaPedidos === tab.id ? 'text-amber-500 border-b-2 border-amber-500' : 'text-gray-500'}`}
                 >
                   {tab.label} {tab.count > 0 && `(${tab.count})`}
                 </button>
@@ -605,31 +652,31 @@ export default function ParceiroDashboard() {
             </div>
 
             {/* Listagem de Pedidos */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {(abaPedidos === 'pendentes' ? pedidosPendentes : abaPedidos === 'preparo' ? pedidosEmPreparo : historicoPedidos).length === 0 ? (
-                <div className="col-span-full py-12 text-center text-gray-500 text-sm border border-dashed border-[#374151] rounded-xl">
-                  Nenhum pedido nesta aba no momento.
+                <div className="col-span-full py-20 text-center text-gray-600 font-bold uppercase text-[10px] tracking-[0.2em] border border-dashed border-gray-900/80 rounded-[2.5rem]">
+                  Fila de pedidos vazia no momento.
                 </div>
               ) : (
                 (abaPedidos === 'pendentes' ? pedidosPendentes : abaPedidos === 'preparo' ? pedidosEmPreparo : historicoPedidos).map(p => (
-                  <div key={p.id} className={`bg-[#1f2937] border rounded-xl p-4 flex flex-col justify-between hover:border-gray-600 transition-all ${p.status === 'pendente' ? 'border-amber-500 animate-[pulse_2s_infinite]' : 'border-[#374151]'}`}>
+                  <div key={p.id} className={`bg-[#121826]/60 backdrop-blur-md border rounded-[2.5rem] p-6 flex flex-col justify-between transition-all ${p.status === 'pendente' ? 'border-amber-500/40 shadow-[0_0_40px_rgba(245,158,11,0.03)] animate-pulse' : 'border-gray-900/60'}`}>
                     <div className="space-y-3">
                       <div className="flex justify-between items-start">
                         <div>
-                          <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase">#PEDIDO {p.numero_pedido_parceiro || p.id}</span>
+                          <span className="text-[10px] font-mono text-amber-500/70 font-black uppercase tracking-tighter">#PEDIDO {p.numero_pedido_parceiro || p.id}</span>
                           <h3 className="font-bold text-sm text-white">{p.cliente_nome}</h3>
                           <span className={`inline-block px-1.5 py-0.5 rounded-[4px] border text-[9px] font-bold uppercase mt-1 ${getStatusBadge(p.status)}`}>
-                            {p.status.replace("_", " ")}
+                            {getStatusLabel(p.status)}
                           </span>
                         </div>
                         <div className="text-right">
-                          <p className="text-emerald-400 font-black text-sm">R$ {parseFloat(p.total).toFixed(2)}</p>
-                          <p className="text-[9px] text-gray-500">{new Date(p.created_at || p.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                          <p className="text-amber-500 font-black text-base font-mono">R$ {parseFloat(p.total).toFixed(2)}</p>
+                          <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mt-1">{new Date(p.created_at || p.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                         </div>
                       </div>
 
                       {/* Itens do Pedido */}
-                      <div className="bg-[#111827] rounded-lg p-3 space-y-2">
+                      <div className="bg-gray-950/40 rounded-2xl p-4 space-y-2 border border-gray-900/40">
                         {p.itens_pedido?.map((it, i) => (
                           <div key={i} className="text-xs">
                             <p className="text-gray-200 font-bold">{it.quantidade}x {it.produtos?.nome || it.produto_nome || "Item"}</p>
@@ -639,15 +686,15 @@ export default function ParceiroDashboard() {
                       </div>
 
                       {/* Logística, Endereço e Metadados do Pedido */}
-                      <div className="bg-[#111827]/60 rounded-lg p-2 text-[11px] text-gray-300 space-y-1.5 border border-[#374151]/40">
-                        <p>📦 <strong>Tipo:</strong> {p.tipo_entrega === "delivery" ? "🚀 Delivery" : "🏪 Retirada"}</p>
+                      <div className="bg-gray-950/20 rounded-2xl p-4 text-[10px] text-gray-400 space-y-2 border border-gray-900/20 uppercase font-bold tracking-tight">
+                        <p><span className="text-gray-600">MODALIDADE:</span> {p.tipo_entrega === "delivery" ? "🚀 Delivery" : "🏪 Retirada"}</p>
                         {p.tipo_entrega === "delivery" && p.endereco_entrega && (
-                          <p>📍 <strong>Endereço:</strong> {p.endereco_entrega}</p>
+                          <p><span className="text-gray-600">ENDEREÇO:</span> <span className="text-gray-300">{p.endereco_entrega}</span></p>
                         )}
                         {p.tipo_entrega === "delivery" && p.ponto_referencia && (
-                          <p>🔍 <strong>Ref:</strong> <span className="text-gray-400">{p.ponto_referencia}</span></p>
+                          <p><span className="text-gray-600">REFERÊNCIA:</span> <span className="text-gray-500 italic">{p.ponto_referencia}</span></p>
                         )}
-                        <p>💳 <strong>Pagamento:</strong> <span className="text-emerald-400 font-mono font-bold">{p.forma_pagamento?.toUpperCase() || "NÃO DEFINIDO"}</span></p>
+                        <p><span className="text-gray-600">PAGAMENTO:</span> <span className="text-amber-500/80 font-mono">{p.forma_pagamento?.toUpperCase() || "NÃO DEFINIDO"}</span></p>
                         {p.forma_pagamento === "dinheiro" && p.troco_para && (
                           <p>💵 <strong>Troco Para:</strong> R$ {parseFloat(p.troco_para).toFixed(2)}</p>
                         )}
@@ -660,7 +707,17 @@ export default function ParceiroDashboard() {
                     </div>
 
                     {/* ÁREA DE AÇÕES TÁTEIS: Focada em Android Touch */}
-                    <div className="mt-4 pt-4 border-t border-[#374151]/50 flex flex-col gap-3">
+                    <div className="mt-4 pt-6 border-t border-gray-900/60 flex flex-col gap-3">
+                      
+                      {/* Botão de Avisar Cliente (Permanece disponível enquanto em rota) */}
+                      {p.status === 'saiu_entrega' && (
+                        <button 
+                          onClick={() => avisarEntregaWhatsApp(p)}
+                          className="w-full h-14 bg-gradient-to-r from-amber-600/20 to-orange-600/20 border border-amber-600/40 text-amber-500 font-black rounded-2xl transition-all flex items-center justify-center text-[10px] uppercase tracking-widest shadow-lg active:scale-95 touch-manipulation mb-1"
+                        >
+                          📢 Reenviar Aviso de Entrega
+                        </button>
+                      )}
                       
                       {/* Botão de Próximo Status (Grande e Chamativo) */}
                       {p.status !== 'finalizado' && p.status !== 'cancelado' && (
@@ -671,7 +728,7 @@ export default function ParceiroDashboard() {
                             const proximo = statusFlow[idx + 1];
                             if (proximo) alterarStatusPedido(p.id, proximo);
                           }}
-                          className="w-full min-h-[52px] bg-emerald-600 active:bg-emerald-700 active:scale-[0.98] text-white font-black rounded-xl transition-all flex items-center justify-center text-sm uppercase tracking-wide shadow-lg shadow-emerald-900/20"
+                          className="w-full min-h-[56px] bg-gradient-to-r from-amber-600 to-orange-600 active:scale-[0.98] text-white font-black rounded-2xl transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-lg shadow-orange-950/20 touch-manipulation"
                         >
                           {p.status === 'pendente' && "👨‍🍳 Confirmar Pedido"}
                           {p.status === 'confirmado' && "🛵 Despachar para Entrega"}
@@ -683,16 +740,27 @@ export default function ParceiroDashboard() {
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <button 
                           onClick={() => handleImprimirPedido(p)}
-                          className="min-h-[44px] bg-[#111827] hover:bg-gray-800 text-gray-300 text-[10px] font-bold py-2 rounded-lg uppercase border border-[#374151] flex items-center justify-center gap-1 active:scale-95"
+                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-400 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
                         >
-                          Imprimir 🖨️
+                          Imprimir
                         </button>
 
                         <button 
                           onClick={() => copiarPedidoAoClipboard(p)}
-                          className="min-h-[44px] bg-[#111827] hover:bg-gray-800 text-gray-300 text-[10px] font-bold py-2 rounded-lg uppercase border border-[#374151] flex items-center justify-center gap-1 active:scale-95"
+                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-400 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
                         >
-                          Copiar 📋
+                          Copiar
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            const novo = prompt("Corrigir status para:\n1 - Novo Pedido\n2 - Em Preparo\n3 - Em Entrega\n4 - Concluir\n5 - Cancelar");
+                            const map = {"1": "pendente", "2": "confirmado", "3": "saiu_entrega", "4": "finalizado", "5": "cancelado"};
+                            if(map[novo]) alterarStatusPedido(p.id, map[novo]);
+                          }}
+                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-500 hover:text-amber-500/60 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
+                        >
+                          Corrigir
                         </button>
 
                         {['pendente', 'confirmado', 'saiu_entrega'].includes(p.status) && (
@@ -701,7 +769,7 @@ export default function ParceiroDashboard() {
                               const motivo = prompt("Motivo do cancelamento (ex: Falta de insumos):");
                               if (motivo) alterarStatusPedido(p.id, "cancelado", motivo);
                             }}
-                            className="min-h-[44px] bg-rose-950/20 hover:bg-rose-950 text-rose-500 text-[10px] font-bold py-2 rounded-lg uppercase border border-rose-900/50 flex items-center justify-center active:scale-95"
+                            className="min-h-[48px] bg-rose-950/20 border border-rose-900/40 text-rose-500 text-[10px] font-black rounded-xl uppercase flex items-center justify-center active:scale-95 touch-manipulation"
                           >
                             Cancelar
                           </button>
@@ -723,53 +791,53 @@ export default function ParceiroDashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Seção de Identidade da Loja */}
             <div className="lg:col-span-3">
-              <form onSubmit={handleSalvarLoja} className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl space-y-4">
-                <div className="flex justify-between items-center mb-2">
-                  <h2 className="text-sm font-black text-emerald-400 uppercase tracking-wider">🖼️ Identidade e Contato da Loja</h2>
-                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold py-1.5 px-4 rounded uppercase transition-colors">
+              <form onSubmit={handleSalvarLoja} className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-8 rounded-[2.5rem] space-y-6 shadow-2xl">
+                <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-2">
+                  <h2 className="text-sm font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">🖼️ Identidade e Contato da Loja</h2>
+                  <button type="submit" className="h-11 px-6 bg-gradient-to-r from-amber-600 to-orange-600 text-white text-[10px] font-black rounded-2xl uppercase tracking-widest transition-all shadow-xl shadow-orange-950/20 active:scale-95">
                     Salvar Dados da Loja
                   </button>
                 </div>
                 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link do Avatar (Logo)</label>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">Link do Avatar (Logo)</label>
                     <input 
                       type="url" 
                       value={lojaForm.logo_url || ""} 
                       onChange={(e) => setLojaForm({...lojaForm, logo_url: e.target.value})} 
-                      className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all" 
                       placeholder="https://..." 
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Link do Banner</label>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">Link do Banner</label>
                     <input 
                       type="url" 
                       value={lojaForm.banner_url || ""} 
                       onChange={(e) => setLojaForm({...lojaForm, banner_url: e.target.value})} 
-                      className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all" 
                       placeholder="https://..." 
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">WhatsApp (Número)</label>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">WhatsApp Oficial</label>
                     <input 
                       type="text" 
                       name="telefone_whatsapp"
                       value={lojaForm.telefone_whatsapp || ""} 
                       onChange={handleLojaInputChange}
-                      className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono" 
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all" 
                       placeholder="91988887777" 
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Endereço de Retirada</label>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">Endereço Local</label>
                     <input 
                       type="text" 
                       value={lojaForm.endereco || ""} 
                       onChange={(e) => setLojaForm({...lojaForm, endereco: e.target.value})} 
-                      className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white" 
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white outline-none focus:border-amber-500 transition-all" 
                       placeholder="Rua Exemplo, 123" 
                     />
                   </div>
@@ -780,17 +848,17 @@ export default function ParceiroDashboard() {
              {/* Coluna Lateral: Categorias e Produtos */}
             <div className="space-y-6 h-fit lg:sticky lg:top-24">
               {/* GESTÃO DE CATEGORIAS */}
-              <div className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl shadow-xl">
-                <h3 className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-4 flex items-center gap-2">📂 Categorias</h3>
+              <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-6 rounded-3xl shadow-xl">
+                <h3 className="text-xs font-black text-amber-500 uppercase tracking-widest mb-4 flex items-center gap-2">📂 Categorias</h3>
                 <form onSubmit={handleSalvarCategoria} className="flex gap-2 mb-4">
                   <input
                     type="text"
                     placeholder="Nova categoria..."
                     value={novaCategoria}
                     onChange={(e) => setNovaCategoria(e.target.value)}
-                    className="flex-1 bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    className="flex-1 bg-gray-950 border border-gray-800 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
                   />
-                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-3 py-2 rounded uppercase transition-colors shadow-lg">
+                  <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white font-black text-[10px] px-4 py-2 rounded-xl uppercase transition-all shadow-lg active:scale-95">
                     {categoriaEditando ? "Salvar" : "Add"}
                   </button>
                 </form>
@@ -799,7 +867,7 @@ export default function ParceiroDashboard() {
                     <div key={cat.id} className="flex items-center justify-between bg-[#111827] p-2 rounded border border-[#374151] text-[11px]">
                       <span className="text-gray-300 font-medium">{cat.nome}</span>
                       <div className="flex gap-2">
-                        <button onClick={() => { setCategoriaEditando(cat); setNovaCategoria(cat.nome); }} className="text-emerald-500 hover:text-emerald-400 font-bold uppercase text-[9px]">Editar</button>
+                        <button onClick={() => { setCategoriaEditando(cat); setNovaCategoria(cat.nome); }} className="text-amber-500 hover:text-amber-400 font-bold uppercase text-[9px]">Editar</button>
                         <button onClick={() => handleDeletarCategoria(cat.id)} className="text-rose-500 hover:text-rose-400 font-bold uppercase text-[9px]">Excluir</button>
                       </div>
                     </div>
@@ -808,8 +876,8 @@ export default function ParceiroDashboard() {
               </div>
 
               {/* Formulário de Produto */}
-              <div className="bg-[#1f2937] border border-[#374151] p-6 rounded-xl shadow-xl">
-              <h2 className="text-base font-black text-white mb-4 flex items-center gap-2">
+              <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-6 rounded-3xl shadow-xl">
+              <h2 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest">
                 {editandoId ? "📝 Editando Item do Cardápio" : "✨ Novo Item no Cardápio"}
               </h2>
               
@@ -817,22 +885,22 @@ export default function ParceiroDashboard() {
 
               <form onSubmit={handleSalvarProduto} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Nome do Lanche/Bebida</label>
-                  <input type="text" required value={form.nome} onChange={(e) => setForm({...form, nome: e.target.value})} className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm text-white" placeholder="Ex: X-Calabresa Suprema" />
+                  <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Nome do Lanche/Bebida</label>
+                  <input type="text" required value={form.nome} onChange={(e) => setForm({...form, nome: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all placeholder:text-gray-700" placeholder="Ex: Burger Bacon" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Preço de Venda (R$)</label>
-                    <input type="number" step="0.01" required value={form.preco} onChange={(e) => setForm({...form, preco: e.target.value})} className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm font-mono text-emerald-400" placeholder="0.00" />
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Preço (R$)</label>
+                    <input type="number" step="0.01" required value={form.preco} onChange={(e) => setForm({...form, preco: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm font-mono text-amber-500 focus:border-amber-500 outline-none" placeholder="0.00" />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Categoria</label>
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Categoria</label>
                     <select 
                       value={form.categoriaId} 
                       onChange={(e) => setForm({...form, categoriaId: e.target.value})} 
-                      className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm text-gray-200" >
-                      <option value="">Selecione uma categoria</option>
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-gray-400 outline-none focus:border-amber-500" >
+                      <option value="">Selecionar</option>
                       {categorias.map((cat) => (
                         <option key={cat.id} value={cat.id}>
                           {cat.nome}
@@ -843,28 +911,28 @@ export default function ParceiroDashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Link/URL da Foto do Produto</label>
+                  <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Link da Foto</label>
                   <input 
                     type="url" 
                     value={form.imagemUrl || ""} 
                     onChange={(e) => setForm({...form, imagemUrl: e.target.value})} 
-                    className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-sm text-white font-mono" 
+                    className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500" 
                     placeholder="https://exemplo.com/suafoto.jpg" 
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Ingredientes / Descrição</label>
-                  <textarea rows="3" value={form.descricao} onChange={(e) => setForm({...form, descricao: e.target.value})} className="w-full bg-[#111827] border border-[#374151] rounded p-2 text-xs text-white font-mono placeholder:font-sans" placeholder="Descrição do produto..." />
+                  <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Descrição</label>
+                  <textarea rows="3" value={form.descricao} onChange={(e) => setForm({...form, descricao: e.target.value})} className="w-full bg-gray-950 border border-gray-800 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-amber-500 resize-none" placeholder="O que vem no prato?" />
                 </div>
 
                 <div className="space-y-2">
-                  <button type="submit" disabled={cadastrando} className={`w-full py-2.5 font-bold rounded text-xs tracking-wide uppercase transition-colors disabled:bg-gray-600 ${editandoId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                  <button type="submit" disabled={cadastrando} className={`w-full h-14 font-black rounded-2xl text-xs tracking-widest uppercase transition-all shadow-lg active:scale-95 touch-manipulation disabled:opacity-50 ${editandoId ? 'bg-amber-600 hover:bg-amber-500' : 'bg-gradient-to-r from-amber-600 to-orange-600'}`}>
                     {cadastrando ? "Salvando..." : editandoId ? "Salvar Alterações 💾" : "Injetar no Cardápio 🚀"}
                   </button>
                   
                   {editandoId && (
-                    <button type="button" onClick={cancelarEdicao} className="w-full py-2 bg-transparent hover:bg-gray-800 font-bold rounded text-xs text-gray-400 border border-[#374151] transition-colors">
+                    <button type="button" onClick={cancelarEdicao} className="w-full h-12 bg-transparent hover:bg-white/5 font-bold rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest transition-all">
                       Cancelar Edição
                     </button>
                   )}
@@ -875,44 +943,44 @@ export default function ParceiroDashboard() {
 
             {/* Listagem de Itens Cadastrados */}
             <div className="lg:col-span-2 space-y-4">
-              <div className="bg-gradient-to-r from-emerald-950 to-[#1f2937] border border-emerald-800 rounded-xl p-4 flex justify-between items-center">
+              <div className="bg-[#121826]/40 backdrop-blur-sm border border-gray-900/60 rounded-[2rem] p-6 flex justify-between items-center shadow-xl">
                 <div>
-                  <h2 className="text-sm font-bold text-white">Cardápio Ativo na Rua</h2>
-                  <p className="text-xs text-gray-300">Estes são os produtos visíveis para os clientes finais.</p>
+                  <h2 className="text-base font-black text-white uppercase tracking-tight">Cardápio Ativo</h2>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">Visível para seus clientes na rua.</p>
                 </div>
-                <span className="bg-[#111827] text-gray-300 px-3 py-1 rounded text-xs font-mono font-bold border border-[#374151]">
+                <span className="bg-gray-950 text-amber-500 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-gray-800 shadow-inner">
                   {produtos.length} {produtos.length === 1 ? "item" : "itens"}
                 </span>
               </div>
 
               {produtos.length === 0 ? (
-                <div className="border border-dashed border-[#374151] rounded-xl p-12 text-center text-gray-500 text-sm">
+                <div className="border border-dashed border-gray-800 rounded-[2rem] p-16 text-center text-gray-600 font-black uppercase text-[10px] tracking-widest">
                   Nenhum lanche catalogado ainda. Use o formulário lateral para dar o pontapé inicial! 🍟
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {produtos.map((p) => (
-                    <div key={p.id} className={`bg-[#1f2937] border ${p.disponivel ? 'border-[#374151]' : 'border-rose-900/50 bg-rose-950/10'} p-4 rounded-xl flex flex-col justify-between transition-all`}>
+                    <div key={p.id} className={`bg-[#121826]/60 backdrop-blur-md border rounded-[2rem] p-6 flex flex-col justify-between transition-all ${p.disponivel ? 'border-gray-900/60' : 'border-rose-950/40 bg-rose-950/5'}`}>
                       
                       <div>
                         <div className="flex justify-between items-start gap-2 mb-2">
                           <div className="flex-1">
-                            <h3 className={`font-bold text-sm ${p.disponivel ? 'text-white' : 'text-gray-500 line-through'}`}>{p.nome}</h3>
-                            <span className="inline-block bg-[#111827] text-[9px] text-gray-400 px-1.5 py-0.5 rounded font-medium uppercase border border-[#374151] mt-1">
+                            <h3 className={`font-black text-sm uppercase tracking-tight ${p.disponivel ? 'text-white' : 'text-gray-600 line-through'}`}>{p.nome}</h3>
+                            <span className="inline-block bg-gray-950 text-[8px] text-gray-500 px-2 py-0.5 rounded-md font-black uppercase tracking-widest border border-gray-900 mt-1.5">
                               {getCategoriaNome(p.categoria_id)}
                             </span>
                           </div>
                           {p.imagem_url && (
-                            <div className="w-12 h-12 rounded-lg overflow-hidden bg-[#111827] border border-[#374151] flex-shrink-0">
+                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-950 border border-gray-800 flex-shrink-0">
                               <img src={p.imagem_url} alt={p.nome} className="w-full h-full object-cover" />
                             </div>
                           )}
                         </div>
-                        <p className="text-xs text-gray-400 line-clamp-2 mb-3">{p.descricao || "Sem descrição informada."}</p>
+                        <p className="text-xs text-gray-500 font-medium line-clamp-2 mb-4 leading-relaxed">{p.descricao || "Sem descrição informada."}</p>
                       </div>
                       
-                      <div className="flex justify-between items-center border-t border-[#374151]/50 pt-3 mt-2 gap-2">
-                        <span className="text-sm font-black text-emerald-400 font-mono">
+                      <div className="flex justify-between items-center border-t border-gray-900/40 pt-4 mt-2 gap-2">
+                        <span className="text-base font-black text-amber-600 font-mono">
                           R$ {parseFloat(p.preco).toFixed(2)}
                         </span>
                         
@@ -921,8 +989,8 @@ export default function ParceiroDashboard() {
                             onClick={() => handleAlternarDisponibilidade(p.id, p.disponivel)}
                             className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded transition-colors select-none ${
                               p.disponivel 
-                                ? "bg-emerald-950 text-emerald-400 hover:bg-amber-950 hover:text-amber-400" 
-                                : "bg-amber-950 text-amber-400 hover:bg-emerald-950 hover:text-emerald-400"
+                                ? "bg-amber-950/20 text-amber-500 hover:bg-amber-950 hover:text-amber-400 border border-amber-900/30" 
+                                : "bg-gray-950 text-gray-600 border border-gray-900"
                             }`}
                           >
                             {p.disponivel ? "🟢 Ativo" : "🟠 Pausado"}

@@ -17,8 +17,8 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="pt-BR" suppressHydrationWarning>
-      <body className="bg-[#111827] text-[#f9fafb] antialiased">
+    <html lang="pt-BR" suppressHydrationWarning className="overflow-x-hidden">
+      <body className="bg-[#111827] text-[#f9fafb] antialiased overflow-x-hidden w-full">
         {children}
       </body>
     </html>
