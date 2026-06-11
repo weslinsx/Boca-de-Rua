@@ -15,6 +15,7 @@ export default function ParceiroDashboard() {
   const [viewPrincipal, setViewPrincipal] = useState("pedidos"); // 'pedidos' | 'cardapio'
   const [abaPedidos, setAbaPedidos] = useState("pendentes");
   const [pedidoParaImpressao, setPedidoParaImpressao] = useState(null);
+  const [pedidoCorrigindo, setPedidoCorrigindo] = useState(null); // Modal de correção de status
 
   // Estado para os dados da Loja/Estabelecimento
   const [lojaForm, setLojaForm] = useState({ 
@@ -89,11 +90,12 @@ export default function ParceiroDashboard() {
     if (!loja?.id) return;
     try {
       const resPed = await fetch(`/api/pedidos?estabelecimentoId=${loja.id}`);
-      if (!resPed.ok) return;
+      if (!resPed.ok) throw new Error(`HTTP ${resPed.status}`);
       const dadosPed = await resPed.json();
       setPedidos(dadosPed);
     } catch (err) {
-      console.error("Erro no polling de pedidos:", err);
+      // Silencia erros de fetch no console para evitar poluição visual em produção
+      if (err.name !== 'TypeError') console.error("Erro ao buscar pedidos:", err);
     }
   }, [loja?.id]);
 
@@ -113,9 +115,9 @@ export default function ParceiroDashboard() {
     const whatsappLimpo = p.cliente_whatsapp.replace(/\D/g, "");
     
     // Texto estilizado com negritos (*) e quebras de linha (\n) para melhor legibilidade
-    let textoMensagem = `*Boa notícia, ${p.cliente_nome}!* \n\n`;
-    textoMensagem += `Seu pedido *#${p.numero_pedido_parceiro || p.id}* no *${loja?.nome}* acabou de sair para entrega! \n\n`;
-    textoMensagem += `Logo o entregador estará aí. Por favor, fique atento para recebê-lo!`;
+    let textoMensagem = `*Boa notícia, ${p.cliente_nome}!* \u{1F973}\n\n`;
+    textoMensagem += `Seu pedido *#${p.numero_pedido_parceiro || p.id}* no *${loja?.nome}* acabou de sair para entrega! \u{1F6F5}\u{1F4A8}\n\n`;
+    textoMensagem += `Logo o entregador estará aí. Por favor, fique atento para recebê-lo! \u{1F3E1}`;
     
     const params = new URLSearchParams({ text: textoMensagem });
     
@@ -753,12 +755,8 @@ export default function ParceiroDashboard() {
                         </button>
 
                         <button 
-                          onClick={() => {
-                            const novo = prompt("Corrigir status para:\n1 - Novo Pedido\n2 - Em Preparo\n3 - Em Entrega\n4 - Concluir\n5 - Cancelar");
-                            const map = {"1": "pendente", "2": "confirmado", "3": "saiu_entrega", "4": "finalizado", "5": "cancelado"};
-                            if(map[novo]) alterarStatusPedido(p.id, map[novo]);
-                          }}
-                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-500 hover:text-amber-500/60 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
+                          onClick={() => setPedidoCorrigindo(p)}
+                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-500 hover:text-amber-500/60 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation transition-colors"
                         >
                           Corrigir
                         </button>
@@ -1022,6 +1020,41 @@ export default function ParceiroDashboard() {
           </div>
         )}
       </main>
+
+      {/* MODAL DE CORREÇÃO DE STATUS (PREMIUM & TÁTIL) */}
+      {pedidoCorrigindo && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121826] border border-gray-800 w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-6 text-center">
+            <div>
+              <span className="bg-amber-950/40 text-amber-500 text-[9px] font-black px-3 py-1 rounded-full border border-amber-900/40 uppercase tracking-widest">Ajuste de Fluxo</span>
+              <h2 className="text-xl font-black text-white mt-4 uppercase tracking-tight">Pedido #{pedidoCorrigindo.numero_pedido_parceiro || pedidoCorrigindo.id}</h2>
+              <p className="text-[10px] text-gray-500 font-bold uppercase mt-1">Alterar status manualmente para:</p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              {[
+                { id: 'pendentes', label: 'Entrada (Novo)', val: 'pendente' },
+                { id: 'confirmado', label: 'Em Preparo', val: 'confirmado' },
+                { id: 'entrega', label: 'Em Entrega', val: 'saiu_entrega' },
+                { id: 'concluido', label: 'Concluído', val: 'finalizado' },
+                { id: 'cancelado', label: 'Cancelar Pedido', val: 'cancelado', danger: true },
+              ].map((opt) => (
+                <button
+                  key={opt.val}
+                  onClick={() => {
+                    alterarStatusPedido(pedidoCorrigindo.id, opt.val);
+                    setPedidoCorrigindo(null);
+                  }}
+                  className={`h-14 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all active:scale-95 ${opt.danger ? 'border-rose-900/40 text-rose-500 hover:bg-rose-950/20' : 'border-gray-800 text-gray-400 hover:border-amber-500/50 hover:text-amber-500'}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setPedidoCorrigindo(null)} className="text-[10px] font-black text-gray-600 uppercase tracking-[0.2em] pt-2 active:scale-90 transition-all">Desistir</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
