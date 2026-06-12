@@ -1,9 +1,27 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import CardapioStatusDisplay from "@/components/CardapioStatusDisplay"; // Importa o novo componente
 import { supabase } from "@/lib/supabase";
 import { formatarTelefone } from "@/app/utils/whatsapp";
+
+// Funções Utilitárias de Data (Definidas fora para evitar re-definições e bugs de escopo)
+const formataDataLocal = (dataInput = new Date()) => {
+  const d = new Date(dataInput);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const getTempoDecorrido = (data) => {
+  if (!data) return "";
+  const inicio = new Date(data);
+  const agora = new Date();
+  const diffMinutos = Math.floor((agora - inicio) / 60000);
+  if (diffMinutos < 1) return "agora";
+  if (diffMinutos < 60) return `${diffMinutos}min`;
+  if (diffMinutos < 1440) return `${Math.floor(diffMinutos / 60)}h`;
+  return new Date(data).toLocaleDateString();
+};
 
 export default function ParceiroDashboard() {
   const router = useRouter();
@@ -12,8 +30,30 @@ export default function ParceiroDashboard() {
   const [produtos, setProdutos] = useState([]);
   const [pedidos, setPedidos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [viewPrincipal, setViewPrincipal] = useState("pedidos"); // 'pedidos' | 'cardapio'
+  const [filtroPedidos, setFiltroPedidos] = useState("");
+  const [viewPrincipal, setViewPrincipal] = useState("pedidos"); // 'pedidos' | 'cardapio' | 'configuracoes'
   const [abaPedidos, setAbaPedidos] = useState("pendentes");
+  
+  // Controle do Calendário Customizado
+  const [isCalendarioAberto, setIsCalendarioAberto] = useState(false);
+  const [viewMes, setViewMes] = useState(new Date().getMonth());
+  const [viewAno, setViewAno] = useState(new Date().getFullYear());
+
+  const [dataFiltroHistorico, setDataFiltroHistorico] = useState(formataDataLocal());
+
+  // Estado local com persistência para rastrear ações (impresso, avisado)
+  const [acoesRealizadas, setAcoesRealizadas] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const salvas = localStorage.getItem("bDR_acoes_pedidos");
+      return salvas ? JSON.parse(salvas) : {};
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem("bDR_acoes_pedidos", JSON.stringify(acoesRealizadas));
+  }, [acoesRealizadas]);
+
   const [pedidoParaImpressao, setPedidoParaImpressao] = useState(null);
   const [pedidoCorrigindo, setPedidoCorrigindo] = useState(null); // Modal de correção de status
 
@@ -22,7 +62,8 @@ export default function ParceiroDashboard() {
     logo_url: "", 
     banner_url: "", 
     telefone_whatsapp: "", 
-    endereco: "" 
+    endereco: "",
+    horarios_funcionamento: null
   });
 
   // Estados do Formulário de Produto
@@ -103,36 +144,100 @@ export default function ParceiroDashboard() {
   useEffect(() => {
     if (!loja?.id || viewPrincipal !== "pedidos") return;
     
-    const intervalo = setInterval(() => buscarPedidos(), 15000);
+    const intervalo = setInterval(() => buscarPedidos(), 30000);
     return () => clearInterval(intervalo);
   }, [buscarPedidos, loja?.id, viewPrincipal]);
 
+  // Lógica de Atividade do Calendário (Pontos Verde/Vermelho)
+  const datasComPedidos = useMemo(() => {
+    const set = new Set();
+    pedidos.forEach(p => {
+      set.add(formataDataLocal(p.created_at || p.criado_em));
+    });
+    return set;
+  }, [pedidos]);
+
+  const diasCalendario = useMemo(() => {
+    const dias = [];
+    const primeiroDiaSemana = new Date(viewAno, viewMes, 1).getDay();
+    const ultimoDiaMes = new Date(viewAno, viewMes + 1, 0).getDate();
+    for (let i = 0; i < primeiroDiaSemana; i++) dias.push(null);
+    for (let d = 1; d <= ultimoDiaMes; d++) dias.push(d);
+    return dias;
+  }, [viewMes, viewAno]);
+
+  const mudarMes = (direcao) => {
+    if (direcao === 'prox') {
+      if (viewMes === 11) { setViewMes(0); setViewAno(v => v + 1); }
+      else setViewMes(v => v + 1);
+    } else {
+      if (viewMes === 0) { setViewMes(11); setViewAno(v => v - 1); }
+      else setViewMes(v => v - 1);
+    }
+  };
+
+  const selecionarData = (dia) => {
+    const novaData = `${viewAno}-${String(viewMes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+    setDataFiltroHistorico(novaData);
+    setIsCalendarioAberto(false);
+  };
+
+  const marcarAcao = (pedidoId, campo) => {
+    setAcoesRealizadas(prev => ({
+      ...prev, [pedidoId]: { ...prev[pedidoId], [campo]: true }
+    }));
+  };
+  
     // Função para avisar cliente sobre entrega no WhatsApp
   const avisarEntregaWhatsApp = useCallback((p) => {
     if (!p || !p.cliente_whatsapp) return;
     
     // Remove qualquer caractere que não seja número (parênteses, espaços, traços)
     const whatsappLimpo = p.cliente_whatsapp.replace(/\D/g, "");
-    
-    // Texto estilizado com negritos (*) e quebras de linha (\n) para melhor legibilidade
+    const telefoneFinal = whatsappLimpo.startsWith("55") && whatsappLimpo.length >= 12 ? whatsappLimpo : `55${whatsappLimpo}`;
+
+    // Usando sequências de escape Unicode para garantir que os emojis não sejam corrompidos
     let textoMensagem = `*Boa notícia, ${p.cliente_nome}!* \u{1F973}\n\n`;
     textoMensagem += `Seu pedido *#${p.numero_pedido_parceiro || p.id}* no *${loja?.nome}* acabou de sair para entrega! \u{1F6F5}\u{1F4A8}\n\n`;
     textoMensagem += `Logo o entregador estará aí. Por favor, fique atento para recebê-lo! \u{1F3E1}`;
-    
-    const params = new URLSearchParams({ text: textoMensagem });
-    
-    // CORREÇÃO: Removidos os caracteres < > que quebravam o link no window.open
-    const zapUrl = `https://wa.me/55${whatsappLimpo}?${params.toString()}`;
+
+    // Usamos encodeURIComponent diretamente e o endpoint oficial api.whatsapp.com para maior estabilidade
+    const zapUrl = `https://api.whatsapp.com/send?phone=${telefoneFinal}&text=${encodeURIComponent(textoMensagem)}`;
     
     window.open(zapUrl, '_blank');
+    marcarAcao(p.id, "avisado");
   }, [loja?.nome]);
 
+  // 1. Filtro de Busca (Global - Varre todos os status e datas)
+  const pedidosFiltrados = useMemo(() => pedidos.filter(p => 
+    p.cliente_nome?.toLowerCase().includes(filtroPedidos.toLowerCase()) ||
+    (p.numero_pedido_parceiro || p.id).toString().includes(filtroPedidos)
+  ), [pedidos, filtroPedidos]);
 
+  // 2. Filtros específicos por aba (Subconjuntos da busca)
+  const pedidosPendentes = useMemo(() => pedidosFiltrados.filter(p => p.status === 'pendente'), [pedidosFiltrados]);
+  const pedidosEmPreparo = useMemo(() => pedidosFiltrados.filter(p => ['confirmado', 'saiu_entrega'].includes(p.status)), [pedidosFiltrados]);
+  
+  const historicoPedidos = useMemo(() => pedidosFiltrados.filter(p => {
+    const isStatusFinal = ['finalizado', 'cancelado'].includes(p.status);
+    if (!isStatusFinal) return false;
+    const dataPedido = formataDataLocal(p.created_at || p.criado_em);
+    return dataPedido === dataFiltroHistorico;
+  }), [pedidosFiltrados, dataFiltroHistorico]);
 
-  // Filtros de Pedidos
-  const pedidosPendentes = pedidos.filter(p => p.status === 'pendente');
-  const pedidosEmPreparo = pedidos.filter(p => ['confirmado', 'saiu_entrega'].includes(p.status));
-  const historicoPedidos = pedidos.filter(p => ['finalizado', 'cancelado'].includes(p.status));
+  // 3. Lógica de exibição final: Busca Global tem precedência sobre as abas
+  const pedidosExibidos = useMemo(() => {
+    if (filtroPedidos.trim() !== "") return pedidosFiltrados;
+    if (abaPedidos === 'pendentes') return pedidosPendentes;
+    if (abaPedidos === 'preparo') return pedidosEmPreparo;
+    return historicoPedidos;
+  }, [filtroPedidos, pedidosFiltrados, abaPedidos, pedidosPendentes, pedidosEmPreparo, historicoPedidos]);
+
+  // Faturamento do Período Filtrado
+  const resumoFinanceiro = historicoPedidos.reduce((acc, p) => ({
+    total: acc.total + parseFloat(p.total || 0),
+    qtd: acc.qtd + 1
+  }), { total: 0, qtd: 0 });
 
   // Função isolada para disparar o combo: Som Local + Notificação Visual
   const dispararAlertaNovoPedido = useCallback(() => {
@@ -192,13 +297,31 @@ export default function ParceiroDashboard() {
         .single();
 
       if (errEst || !est) throw new Error("Estabelecimento não encontrado.");
+
+      if (est.status === 'suspenso') {
+        alert("Este estabelecimento está suspenso. Entre em contato com o suporte.");
+        handleLogout();
+        return;
+      }
+
       setLoja(est);
       setLojaForm({
         logo_url: est.logo_url || "",
         banner_url: est.banner_url || "",
         telefone_whatsapp: est.telefone_whatsapp || "",
-        endereco: est.endereco || ""
+        endereco: est.endereco || "",
+        horarios_funcionamento: est.horarios_funcionamento || {
+          // Default para horários de funcionamento se não houver
+          seg: { ativo: true, inicio: "18:00", fim: "23:00" },
+          ter: { ativo: true, inicio: "18:00", fim: "23:00" },
+          qua: { ativo: true, inicio: "18:00", fim: "23:00" },
+          qui: { ativo: true, inicio: "18:00", fim: "23:00" },
+          sex: { ativo: true, inicio: "18:00", fim: "00:00" },
+          sab: { ativo: true, inicio: "18:00", fim: "00:00" },
+          dom: { ativo: true, inicio: "18:00", fim: "23:00" },
+        }
       });
+      // O status_cardapio já vem no objeto `est` e é passado para `setLoja`
 
       // Proteção de Erro de JSON na rota de produtos
       const resProd = await fetch(`/api/parceiro/produtos?estabelecimentoId=${est.id}`);
@@ -225,6 +348,76 @@ export default function ParceiroDashboard() {
       setLoading(false);
     }
   }
+
+  // Auxiliar para atualizar apenas um campo do JSON de horários
+  const updateHorario = (dia, campo, valor) => {
+    setLojaForm(prev => ({
+      ...prev,
+      horarios_funcionamento: {
+        ...prev.horarios_funcionamento,
+        [dia]: { ...prev.horarios_funcionamento[dia], [campo]: valor }
+      }
+    }));
+  };
+
+  // Replicar horário de um dia para todos os outros (Otimização de UX)
+  const replicarHorarios = (diaOrigem) => {
+    const base = lojaForm.horarios_funcionamento[diaOrigem];
+    const novosHorarios = {};
+    ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'].forEach(dia => {
+      novosHorarios[dia] = { ...base };
+    });
+    setLojaForm(prev => ({ ...prev, horarios_funcionamento: novosHorarios }));
+  };
+
+  // Função Auxiliar para Processar Status em Tempo Real
+  const isAbertaAgora = useMemo(() => {
+    if (!lojaForm.horarios_funcionamento) return false;
+    
+    const agora = new Date();
+    // Mapeamento JS (0-6) para o seu JSON (seg-dom)
+    const dias = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+    const diaHoje = dias[agora.getDay()];
+    const config = lojaForm.horarios_funcionamento[diaHoje];
+
+    if (!config || !config.ativo) return false;
+
+    // Converte tudo para minutos totais desde o início do dia para comparação
+    const horaAtualMinutos = agora.getHours() * 60 + agora.getMinutes();
+    const [hIni, mIni] = config.inicio.split(':').map(Number);
+    const [hFim, mFim] = config.fim.split(':').map(Number);
+    
+    const inicioMinutos = hIni * 60 + mIni;
+    let fimMinutos = hFim * 60 + mFim;
+
+    // Tratamento para horários que atravessam a meia-noite (ex: até 02:00)
+    if (fimMinutos <= inicioMinutos) fimMinutos += 1440; 
+
+    return horaAtualMinutos >= inicioMinutos && horaAtualMinutos <= fimMinutos;
+  }, [lojaForm.horarios_funcionamento]);
+
+  const handleUpdateStatusNum = useCallback(async (novoStatus) => {
+    try {
+      const res = await fetch("/api/parceiro", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: loja.id,
+          status_cardapio: novoStatus
+        }),
+      });
+
+      if (res.ok) {
+        setLoja(prev => ({ ...prev, status_cardapio: novoStatus }));
+      } else {
+        const errorData = await res.json();
+        console.error("Erro na API:", errorData.error);
+        alert("Erro ao mudar status: " + errorData.error);
+      }
+    } catch (err) { 
+      console.error("Erro ao mudar status", err); 
+    }
+  }, [loja?.id, setLoja]);
 
   const handleSalvarLoja = async (e) => {
     e.preventDefault();
@@ -505,6 +698,11 @@ export default function ParceiroDashboard() {
 
   const handleImprimirPedido = (pedido) => {
     setPedidoParaImpressao(pedido);
+    
+    setAcoesRealizadas(prev => ({
+      ...prev, [pedido.id]: { ...prev[pedido.id], impresso: true }
+    }));
+
     setTimeout(() => {
       window.print();
     }, 500);
@@ -553,7 +751,7 @@ export default function ParceiroDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070a13] text-[#f9fafb] font-sans antialiased overflow-x-hidden selection:bg-amber-500/30 w-full relative">
+    <div className="min-h-screen bg-[#070a13] text-[#f9fafb] font-sans antialiased overflow-x-hidden selection:bg-amber-500/30 w-full relative max-w-full">
       {/* CSS Nativo para Impressão Térmica */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
@@ -599,18 +797,29 @@ export default function ParceiroDashboard() {
         )}
       </div>
 
-      {/* GLOWS ATMOSFÉRICOS DE FUNDO */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-amber-500/5 rounded-full blur-[120px] pointer-events-none" />
+      {/* GLOWS ATMOSFÉRICOS DE FUNDO (para profundidade no tema premium) */}
+      <div className="absolute -top-40 -left-40 w-96 h-96 bg-orange-600/10 rounded-full blur-[120px] pointer-events-none overflow-hidden" />
+      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-amber-500/5 rounded-full blur-[120px] pointer-events-none overflow-hidden" />
 
       {/* Header */}
       <header className="bg-[#121826]/80 backdrop-blur-md border-b border-gray-900/60 px-6 py-4 sticky top-0 z-50 shadow-2xl w-full">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4"> {/* sm:flex-row para responsividade */}
           <div>
             <span className="bg-amber-950/40 text-amber-500 text-[9px] font-black px-2 py-0.5 rounded border border-amber-900/40 uppercase tracking-widest">
               Painel Operacional
             </span>
-            <h1 className="text-xl font-black text-white mt-1 uppercase tracking-tight">{loja?.nome} 🏪</h1>
+            <div className="flex items-center gap-2 mt-1">
+              {/* LED pulsante no header refletindo o status real (Horário + Comando Manual) */}
+              <div className="relative flex items-center justify-center w-4 h-4">
+                <span className={`absolute inline-flex h-full w-full rounded-full opacity-30 animate-ping ${
+                  (isAbertaAgora && (loja?.status_cardapio || 1) === 1) || (!isAbertaAgora && loja?.status_cardapio === 3) ? 'bg-emerald-400' : 'bg-rose-400'
+                }`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                  (isAbertaAgora && (loja?.status_cardapio || 1) === 1) || (!isAbertaAgora && loja?.status_cardapio === 3) ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-rose-500 shadow-[0_0_10px_#f43f5e]'
+                }`}></span>
+              </div>
+              <h1 className="text-xl font-black text-white uppercase tracking-tight">{loja?.nome} 🏪</h1>
+            </div>
             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Responsável: <span className="text-gray-300">{user?.nome}</span></p>
           </div>
           <div className="flex gap-2">
@@ -626,6 +835,12 @@ export default function ParceiroDashboard() {
             >
               Cardápio
             </button>
+            <button 
+              onClick={() => setViewPrincipal("configuracoes")}
+              className={`h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border touch-manipulation ${viewPrincipal === 'configuracoes' ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/20' : 'bg-gray-950 border-gray-800 text-gray-500'}`}
+            >
+              Ajustes
+            </button>
             <button onClick={handleLogout} className="h-11 px-5 bg-gray-950 border border-gray-800 hover:border-rose-900/50 text-rose-500 text-[10px] font-black uppercase rounded-2xl transition-all active:scale-95 touch-manipulation">
               Sair
             </button>
@@ -634,46 +849,106 @@ export default function ParceiroDashboard() {
       </header>
 
       <main className="p-4 md:p-6 max-w-7xl mx-auto relative z-10 space-y-6">
-        {viewPrincipal === "pedidos" ? (
+        {viewPrincipal === "pedidos" && (
           <div className="space-y-6">
-            {/* Navegação de Pedidos */}
-            <div className="flex gap-4 border-b border-gray-900 pb-2 overflow-x-auto no-scrollbar">
+             {/* Filtros e Busca */}
+            <div className="flex flex-col sm:flex-row gap-3 max-w-2xl mx-auto">
+              <div className="relative flex-1 group">
+                <input 
+                  type="text" 
+                  placeholder="Buscar por cliente ou pedido..." 
+                  value={filtroPedidos}
+                  onChange={(e) => setFiltroPedidos(e.target.value)}
+                  className="w-full h-12 bg-gray-950/40 border border-gray-900 rounded-2xl px-10 text-[11px] text-white focus:border-amber-500 transition-all outline-none"
+                />
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-amber-500 transition-colors text-xs">🔍</span>
+              </div>
+              
+              {abaPedidos === 'historico' && (
+                <button 
+                  onClick={() => {
+                    const hoje = new Date();
+                    setViewMes(hoje.getMonth());
+                    setViewAno(hoje.getFullYear());
+                    setIsCalendarioAberto(true);
+                  }}
+                  className="h-12 bg-gray-950 border border-gray-800 rounded-2xl px-6 flex items-center justify-between gap-4 active:scale-95 transition-all min-w-[200px]"
+                >
+                  <div className="text-left">
+                    <p className="text-[8px] font-black text-gray-600 uppercase tracking-widest leading-none">Data do Arquivo</p>
+                    <p className="text-[10px] font-black text-amber-500 uppercase tracking-tighter mt-1">📅 {new Date(dataFiltroHistorico + 'T12:00:00').toLocaleDateString('pt-BR')}</p>
+                  </div>
+                  <span className="text-gray-700 text-[10px]">▼</span>
+                </button>
+              )}
+            </div>
+
+            {/* Navegação de Pedidos (Estilo Pílula Premium - Sem Scroll Horizontal) */}
+            <div className="bg-gray-950/40 p-1.5 rounded-2xl border border-gray-900/80 grid grid-cols-3 gap-1 mb-4">
               {[
                 { id: 'pendentes', label: 'Entrada', count: pedidosPendentes.length },
-                { id: 'preparo', label: 'Em Preparo/Entrega', count: pedidosEmPreparo.length },
+                { id: 'preparo', label: 'Preparo', count: pedidosEmPreparo.length },
                 { id: 'historico', label: 'Histórico', count: null }
               ].map(tab => (
                 <button
                   key={tab.id}
-                  onClick={() => setAbaPedidos(tab.id)}
-                  className={`pb-2 px-1 text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${abaPedidos === tab.id ? 'text-amber-500 border-b-2 border-amber-500' : 'text-gray-500'}`}
+                  onClick={() => {
+                    setAbaPedidos(tab.id);
+                    if (tab.id === 'historico') setDataFiltroHistorico(formataDataLocal());
+                  }}
+                  className={`h-11 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all text-center flex items-center justify-center ${abaPedidos === tab.id ? 'bg-amber-600/10 border border-amber-600/30 text-amber-500' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}
                 >
                   {tab.label} {tab.count > 0 && `(${tab.count})`}
                 </button>
               ))}
             </div>
 
+            {/* RESUMO FINANCEIRO (Aparece apenas no histórico) */}
+            {abaPedidos === 'historico' && historicoPedidos.length > 0 && (
+              <div className="max-w-2xl mx-auto w-full bg-amber-500/10 border border-amber-500/20 p-4 rounded-3xl flex justify-around items-center animate-fade-in">
+                <div className="text-center">
+                  <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Pedidos no Dia</p>
+                  <p className="text-xl font-black text-white">{resumoFinanceiro.qtd}</p>
+                </div>
+                <div className="h-8 w-px bg-gray-900" />
+                <div className="text-center">
+                  <p className="text-[8px] font-black text-amber-500 uppercase tracking-widest">Faturamento</p>
+                  <p className="text-xl font-black text-amber-500 font-mono">R$ {resumoFinanceiro.total.toFixed(2)}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Alerta de Busca Ativa */}
+            {filtroPedidos.trim() !== "" && (
+              <div className="flex justify-center animate-fade-in">
+                <span className="text-[9px] font-black text-amber-500 uppercase tracking-[0.2em] bg-amber-500/10 px-4 py-2 rounded-full border border-amber-500/20 shadow-lg shadow-amber-900/5">
+                  🔍 Mostrando resultados da busca ({pedidosExibidos.length})
+                </span>
+              </div>
+            )}
+
             {/* Listagem de Pedidos */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {(abaPedidos === 'pendentes' ? pedidosPendentes : abaPedidos === 'preparo' ? pedidosEmPreparo : historicoPedidos).length === 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
+              {pedidosExibidos.length === 0 ? (
                 <div className="col-span-full py-20 text-center text-gray-600 font-bold uppercase text-[10px] tracking-[0.2em] border border-dashed border-gray-900/80 rounded-[2.5rem]">
-                  Fila de pedidos vazia no momento.
+                  {filtroPedidos ? `Nenhum pedido encontrado para "${filtroPedidos}"` : abaPedidos === 'historico' ? `Nenhum registro em ${new Date(dataFiltroHistorico + 'T00:00:00').toLocaleDateString()}` : "Fila de pedidos vazia."}
                 </div>
               ) : (
-                (abaPedidos === 'pendentes' ? pedidosPendentes : abaPedidos === 'preparo' ? pedidosEmPreparo : historicoPedidos).map(p => (
-                  <div key={p.id} className={`bg-[#121826]/60 backdrop-blur-md border rounded-[2.5rem] p-6 flex flex-col justify-between transition-all ${p.status === 'pendente' ? 'border-amber-500/40 shadow-[0_0_40px_rgba(245,158,11,0.03)] animate-pulse' : 'border-gray-900/60'}`}>
+                pedidosExibidos.map(p => (
+                  <div key={p.id} className={`bg-[#121826]/60 backdrop-blur-md border rounded-[2.5rem] p-6 flex flex-col justify-between transition-all ${p.status === 'pendente' ? 'border-blue-500/30 shadow-[0_0_40px_rgba(59,130,246,0.03)]' : 'border-gray-900/60'}`}>
                     <div className="space-y-3">
                       <div className="flex justify-between items-start">
                         <div>
-                          <span className="text-[10px] font-mono text-amber-500/70 font-black uppercase tracking-tighter">#PEDIDO {p.numero_pedido_parceiro || p.id}</span>
+                          <span className="text-[10px] font-mono text-gray-500 font-black uppercase tracking-tighter">#PEDIDO {p.numero_pedido_parceiro || p.id}</span>
                           <h3 className="font-bold text-sm text-white">{p.cliente_nome}</h3>
                           <span className={`inline-block px-1.5 py-0.5 rounded-[4px] border text-[9px] font-bold uppercase mt-1 ${getStatusBadge(p.status)}`}>
                             {getStatusLabel(p.status)}
                           </span>
                         </div>
-                        <div className="text-right">
-                          <p className="text-amber-500 font-black text-base font-mono">R$ {parseFloat(p.total).toFixed(2)}</p>
-                          <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mt-1">{new Date(p.created_at || p.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        <div className="text-right flex flex-col items-end">
+                          <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-tighter mb-1 ${p.status === 'pendente' ? 'bg-blue-500 text-white animate-bounce' : 'bg-gray-900 text-gray-500'}`}>🕒 {getTempoDecorrido(p.created_at || p.criado_em)}</span>
+                          <p className="text-amber-500 font-black text-base font-mono leading-none">R$ {parseFloat(p.total).toFixed(2)}</p>
+                          <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mt-1">{new Date(p.created_at || p.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                         </div>
                       </div>
 
@@ -715,13 +990,13 @@ export default function ParceiroDashboard() {
                       {p.status === 'saiu_entrega' && (
                         <button 
                           onClick={() => avisarEntregaWhatsApp(p)}
-                          className="w-full h-14 bg-gradient-to-r from-amber-600/20 to-orange-600/20 border border-amber-600/40 text-amber-500 font-black rounded-2xl transition-all flex items-center justify-center text-[10px] uppercase tracking-widest shadow-lg active:scale-95 touch-manipulation mb-1"
+                          className={`w-full h-14 border rounded-2xl transition-all flex items-center justify-center text-[10px] uppercase tracking-widest active:scale-95 touch-manipulation mb-1 ${acoesRealizadas[p.id]?.avisado ? 'bg-gray-900/40 border-gray-900 text-gray-600' : 'bg-amber-600 border-amber-500 text-white animate-pulse font-black shadow-lg shadow-amber-950/20'}`}
                         >
-                          📢 Reenviar Aviso de Entrega
+                          {acoesRealizadas[p.id]?.avisado ? "✅ Aviso de Entrega Enviado" : "📢 Enviar Aviso de Entrega"}
                         </button>
                       )}
                       
-                      {/* Botão de Próximo Status (Grande e Chamativo) */}
+                      {/* Botão de Próximo Status (Psicologia das Cores: Azul -> Roxo -> Verde) */}
                       {p.status !== 'finalizado' && p.status !== 'cancelado' && (
                         <button 
                           onClick={() => {
@@ -730,7 +1005,13 @@ export default function ParceiroDashboard() {
                             const proximo = statusFlow[idx + 1];
                             if (proximo) alterarStatusPedido(p.id, proximo);
                           }}
-                          className="w-full min-h-[56px] bg-gradient-to-r from-amber-600 to-orange-600 active:scale-[0.98] text-white font-black rounded-2xl transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-lg shadow-orange-950/20 touch-manipulation"
+                          className={`w-full min-h-[56px] text-white font-black rounded-2xl transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-lg active:scale-[0.98] touch-manipulation ${
+                            p.status === 'pendente' 
+                              ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-blue-950/20 animate-pulse" 
+                              : p.status === 'confirmado'
+                                ? "bg-gradient-to-r from-purple-600 to-fuchsia-600 shadow-purple-950/20 animate-pulse"
+                                : "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-950/20 animate-pulse"
+                          } ${['pendente', 'confirmado'].includes(p.status) && !acoesRealizadas[p.id]?.impresso ? 'animate-pulse' : ''}`}
                         >
                           {p.status === 'pendente' && "👨‍🍳 Confirmar Pedido"}
                           {p.status === 'confirmado' && "🛵 Despachar para Entrega"}
@@ -741,15 +1022,15 @@ export default function ParceiroDashboard() {
                       {/* Botões Secundários */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <button 
-                          onClick={() => handleImprimirPedido(p)}
-                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-400 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
+                          onClick={() => { handleImprimirPedido(p); marcarAcao(p.id, "impresso"); }}
+                          className={`min-h-[48px] border text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation transition-all ${acoesRealizadas[p.id]?.impresso ? 'bg-gray-950 border-gray-900 text-gray-600' : 'bg-gray-900 border-amber-500/50 text-amber-500 animate-pulse shadow-lg shadow-amber-900/10'}`}
                         >
                           Imprimir
                         </button>
 
                         <button 
                           onClick={() => copiarPedidoAoClipboard(p)}
-                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-400 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation"
+                          className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-500 hover:text-white text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation transition-colors"
                         >
                           Copiar
                         </button>
@@ -785,10 +1066,19 @@ export default function ParceiroDashboard() {
               )}
             </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        )}
+
+        {viewPrincipal === "configuracoes" && (
+          <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
+            {/* Componente de Status Refatorado */}
+            <CardapioStatusDisplay 
+              statusNum={loja?.status_cardapio || 1} 
+              isAbertaAgora={isAbertaAgora} 
+              onToggleStatus={handleUpdateStatusNum} 
+            />
+
             {/* Seção de Identidade da Loja */}
-            <div className="lg:col-span-3">
+            <div>
               <form onSubmit={handleSalvarLoja} className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-8 rounded-[2.5rem] space-y-6 shadow-2xl">
                 <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-2">
                   <h2 className="text-sm font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">🖼️ Identidade e Contato da Loja</h2>
@@ -841,8 +1131,95 @@ export default function ParceiroDashboard() {
                   </div>
                 </div>
               </form>
+
+              {/* SEÇÃO DE HORÁRIOS DE FUNCIONAMENTO - FOCO MOBILE */}
+              <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-8 rounded-[2.5rem] mt-6 shadow-2xl space-y-6">
+                <div>
+                  <h2 className="text-sm font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">⏰ Horários de Funcionamento</h2>
+                  <p className="text-[10px] text-gray-500 mt-1 font-bold uppercase tracking-tight italic">Determine quando sua loja estará aberta para receber pedidos.</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {lojaForm.horarios_funcionamento && 
+                    ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'].map((dia) => {
+                      const dados = lojaForm.horarios_funcionamento[dia];
+                      const diaExtenso = {
+                        seg: "Segunda", ter: "Terça", qua: "Quarta", qui: "Quinta",
+                        sex: "Sexta", sab: "Sábado", dom: "Domingo"
+                      }[dia];
+
+                      if (!dados) return null;
+                      
+                      return (
+                        <div key={dia} className={`p-6 rounded-[2rem] border transition-all duration-300 ${dados.ativo ? 'bg-[#0f1420] border-gray-800 shadow-xl' : 'bg-gray-950/30 border-gray-900/50 opacity-40'}`}>
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-sm font-bold uppercase tracking-widest text-gray-300">{diaExtenso}</span>
+                            <button 
+                              type="button"
+                              onClick={() => updateHorario(dia, 'ativo', !dados.ativo)}
+                              className={`h-7 px-3 rounded-full text-[8px] font-black uppercase tracking-widest transition-all border ${dados.ativo ? 'bg-amber-500 border-amber-500 text-black' : 'bg-gray-900 border-gray-800 text-gray-500'}`}
+                            >
+                              {dados.ativo ? 'Ativo' : 'Pausado'}
+                            </button>
+                          </div>
+
+                          {dados.ativo ? (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-center gap-2">
+                                <div className="flex-1 space-y-1">
+                                  <label className="text-[9px] font-black text-gray-500 uppercase block text-center tracking-tighter">Abre às</label>
+                                  <input 
+                                    type="time" 
+                                    value={dados.inicio} 
+                                    onChange={(e) => updateHorario(dia, 'inicio', e.target.value)}
+                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl h-11 px-2 text-sm font-medium text-amber-500 focus:border-amber-500 outline-none text-center"
+                                  />
+                                </div>
+                                <span className="text-gray-700 text-xs mt-4">/</span>
+                                <div className="flex-1 space-y-1">
+                                  <label className="text-[9px] font-black text-gray-500 uppercase block text-center tracking-tighter">Fecha às</label>
+                                  <input 
+                                    type="time" 
+                                    value={dados.fim} 
+                                    onChange={(e) => updateHorario(dia, 'fim', e.target.value)}
+                                    className="w-full bg-gray-950 border border-gray-800 rounded-xl h-11 px-2 text-sm font-medium text-amber-500 focus:border-amber-500 outline-none text-center"
+                                  />
+                                </div>
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={() => replicarHorarios(dia)}
+                                className="w-full h-9 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.05] rounded-xl flex items-center justify-center gap-1 text-[8px] font-black text-gray-400 hover:text-amber-500 uppercase tracking-widest transition-all active:scale-95"
+                              >
+                                <span>🔄</span> Replicar
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="h-[76px] flex items-center justify-center border border-dashed border-gray-900/50 rounded-xl">
+                              <span className="text-[8px] font-black text-gray-700 uppercase tracking-widest">Fechado</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button 
+                    type="button"
+                    onClick={handleSalvarLoja}
+                    className="h-12 px-8 bg-gray-900 border border-amber-500/30 text-amber-500 hover:bg-amber-500 hover:text-black font-black text-[10px] uppercase rounded-2xl transition-all active:scale-95 shadow-lg shadow-amber-950/10"
+                  >
+                    Atualizar Grade de Horários
+                  </button>
+                </div>
+              </div>
             </div>
-            
+          </div>
+        )}
+
+        {viewPrincipal === "cardapio" && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
              {/* Coluna Lateral: Categorias e Produtos */}
             <div className="space-y-6 h-fit lg:sticky lg:top-24">
               {/* GESTÃO DE CATEGORIAS */}
@@ -857,7 +1234,7 @@ export default function ParceiroDashboard() {
                     className="flex-1 bg-gray-950 border border-gray-800 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
                   />
                   <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white font-black text-[10px] px-4 py-2 rounded-xl uppercase transition-all shadow-lg active:scale-95">
-                    {categoriaEditando ? "Salvar" : "Add"}
+                    {categoriaEditando ? "Salvar" : "Inserir"}
                   </button>
                 </form>
                 <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
@@ -953,7 +1330,7 @@ export default function ParceiroDashboard() {
 
               {produtos.length === 0 ? (
                 <div className="border border-dashed border-gray-800 rounded-[2rem] p-16 text-center text-gray-600 font-black uppercase text-[10px] tracking-widest">
-                  Nenhum lanche catalogado ainda. Use o formulário lateral para dar o pontapé inicial! 🍟
+                  Nenhum lanche catalogado ainda. Use o formulário para dar o pontapé inicial! 🍟
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1033,11 +1410,11 @@ export default function ParceiroDashboard() {
 
             <div className="grid grid-cols-1 gap-2">
               {[
-                { id: 'pendentes', label: 'Entrada (Novo)', val: 'pendente' },
-                { id: 'confirmado', label: 'Em Preparo', val: 'confirmado' },
-                { id: 'entrega', label: 'Em Entrega', val: 'saiu_entrega' },
-                { id: 'concluido', label: 'Concluído', val: 'finalizado' },
-                { id: 'cancelado', label: 'Cancelar Pedido', val: 'cancelado', danger: true },
+                { id: 'pendentes', label: 'Entrada (Novo)', val: 'pendente', color: 'border-blue-900/40 text-blue-400 hover:bg-blue-950/20' },
+                { id: 'confirmado', label: 'Em Preparo', val: 'confirmado', color: 'border-purple-900/40 text-purple-400 hover:bg-purple-950/20' },
+                { id: 'entrega', label: 'Em Entrega', val: 'saiu_entrega', color: 'border-fuchsia-900/40 text-fuchsia-400 hover:bg-fuchsia-950/20' },
+                { id: 'concluido', label: 'Concluído', val: 'finalizado', color: 'border-emerald-900/40 text-emerald-400 hover:bg-emerald-950/20' },
+                { id: 'cancelado', label: 'Cancelar Pedido', val: 'cancelado', color: 'border-rose-900/40 text-rose-500 hover:bg-rose-950/20' },
               ].map((opt) => (
                 <button
                   key={opt.val}
@@ -1045,7 +1422,7 @@ export default function ParceiroDashboard() {
                     alterarStatusPedido(pedidoCorrigindo.id, opt.val);
                     setPedidoCorrigindo(null);
                   }}
-                  className={`h-14 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all active:scale-95 ${opt.danger ? 'border-rose-900/40 text-rose-500 hover:bg-rose-950/20' : 'border-gray-800 text-gray-400 hover:border-amber-500/50 hover:text-amber-500'}`}
+                  className={`h-14 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all active:scale-95 ${opt.color || 'border-gray-800 text-gray-400 hover:border-amber-500/50 hover:text-amber-500'}`}
                 >
                   {opt.label}
                 </button>
@@ -1055,6 +1432,63 @@ export default function ParceiroDashboard() {
           </div>
         </div>
       )}
+
+      {/* MODAL CALENDÁRIO INTELIGENTE (PONTOS VERDE/VERMELHO) */}
+      {isCalendarioAberto && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in">
+          <div className="bg-[#121826] border border-gray-800 w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-6">
+            <div className="flex justify-between items-center px-2">
+              <button onClick={() => mudarMes('ant')} className="w-10 h-10 flex items-center justify-center bg-gray-950 rounded-full border border-gray-900 text-gray-400 active:bg-amber-500 active:text-black">◀</button>
+              <div className="text-center">
+                <h2 className="text-xs font-black text-white uppercase tracking-[0.2em]">
+                  {new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(viewAno, viewMes))}
+                </h2>
+              </div>
+              <button onClick={() => mudarMes('prox')} className="w-10 h-10 flex items-center justify-center bg-gray-950 rounded-full border border-gray-900 text-gray-400 active:bg-amber-500 active:text-black">▶</button>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 text-center">
+              {['D','S','T','Q','Q','S','S'].map((s, i) => <span key={`header-upper-${i}`} className="text-[8px] font-black text-gray-600">{s}</span>)}
+              {diasCalendario.map((dia, idx) => {
+                if (!dia) return <div key={idx} />;
+                
+                const dataISO = `${viewAno}-${String(viewMes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+                const temPedido = datasComPedidos.has(dataISO);
+                const isSelecionado = dataFiltroHistorico === dataISO;
+                const isFuturo = new Date(dataISO + 'T23:59:59') > new Date();
+
+                return (
+                  <button
+                    key={idx}
+                    disabled={isFuturo}
+                    onClick={() => selecionarData(dia)}
+                    className={`relative h-12 flex flex-col items-center justify-center rounded-xl transition-all active:scale-90 ${isSelecionado ? 'bg-amber-500 text-black font-black' : 'text-gray-400 hover:bg-white/5'} ${isFuturo ? 'opacity-20' : ''}`}
+                  >
+                    <span className="text-[11px]">{dia}</span>
+                    {!isFuturo && (
+                      <div className={`w-1 h-1 rounded-full mt-1 ${temPedido ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-center gap-4 pt-2 border-t border-gray-900/50">
+               <div className="flex items-center gap-1.5">
+                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                 <span className="text-[8px] font-black text-gray-500 uppercase">Com Pedidos</span>
+               </div>
+               <div className="flex items-center gap-1.5">
+                 <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                 <span className="text-[8px] font-black text-gray-500 uppercase">Sem Pedidos</span>
+               </div>
+            </div>
+            
+            <button onClick={() => setIsCalendarioAberto(false)} className="w-full h-12 text-[10px] font-black text-gray-500 uppercase tracking-widest pt-2">Cancelar</button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

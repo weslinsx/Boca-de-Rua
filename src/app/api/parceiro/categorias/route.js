@@ -12,6 +12,14 @@ export async function GET(request) {
       return NextResponse.json({ error: "estabelecimentoId é obrigatório" }, { status: 400 });
     }
 
+    // Segurança: Verificar status da loja
+    const { data: est } = await supabase
+      .from("estabelecimentos")
+      .select("status")
+      .eq("id", parseInt(estabelecimentoId))
+      .single();
+    if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado." }, { status: 403 });
+
     const { data: categorias, error } = await supabase
       .from("categorias")
       .select("*")
@@ -37,6 +45,14 @@ export async function POST(request) {
       return NextResponse.json({ error: "Dados obrigatórios ausentes." }, { status: 400 });
     }
 
+    // Segurança: Verificar status da loja
+    const { data: est } = await supabase
+      .from("estabelecimentos")
+      .select("status")
+      .eq("id", parseInt(estabelecimentoId))
+      .single();
+    if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado." }, { status: 403 });
+
     const { data, error } = await supabase
       .from("categorias")
       .insert([{ estabelecimento_id: parseInt(estabelecimentoId), nome, ordem: parseInt(ordem || 0) }])
@@ -58,6 +74,17 @@ export async function PATCH(request) {
 
     if (!categoriaId) {
       return NextResponse.json({ error: "ID da categoria é obrigatório." }, { status: 400 });
+    }
+
+    // Segurança: Buscar a loja da categoria
+    const { data: catInfo } = await supabase.from("categorias").select("estabelecimento_id").eq("id", categoriaId).single();
+    if (catInfo) {
+      const { data: est } = await supabase
+        .from("estabelecimentos")
+        .select("status")
+        .eq("id", catInfo.estabelecimento_id)
+        .single();
+      if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado." }, { status: 403 });
     }
 
     const { data, error } = await supabase
@@ -88,6 +115,17 @@ export async function DELETE(request) {
     const categoriaId = searchParams.get("categoriaId");
 
     if (!categoriaId) return NextResponse.json({ error: "ID da categoria é obrigatório." }, { status: 400 });
+
+    // Segurança: Buscar a loja da categoria
+    const { data: catInfo } = await supabase.from("categorias").select("estabelecimento_id").eq("id", categoriaId).single();
+    if (catInfo) {
+      const { data: est } = await supabase
+        .from("estabelecimentos")
+        .select("status")
+        .eq("id", catInfo.estabelecimento_id)
+        .single();
+      if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado." }, { status: 403 });
+    }
 
     const { error } = await supabase.from("categorias").delete().eq("id", categoriaId);
 

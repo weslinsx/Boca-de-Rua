@@ -13,6 +13,14 @@ export async function GET(request) {
       return NextResponse.json({ error: "Estabelecimento ID ausente" }, { status: 400 });
     }
 
+    // Segurança: Verificar status da loja
+    const { data: est } = await supabase
+      .from("estabelecimentos")
+      .select("status")
+      .eq("id", parseInt(estabelecimentoId))
+      .single();
+    if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado: estabelecimento suspenso." }, { status: 403 });
+
     const { data, error } = await supabase
       .from("produtos")
       .select("*")
@@ -38,6 +46,14 @@ export async function POST(request) {
     if (!estabelecimentoId || !nome || preco === undefined) {
       return NextResponse.json({ error: "Dados obrigatórios ausentes." }, { status: 400 });
     }
+
+    // Segurança: Verificar status da loja
+    const { data: est } = await supabase
+      .from("estabelecimentos")
+      .select("status")
+      .eq("id", parseInt(estabelecimentoId))
+      .single();
+    if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado: estabelecimento suspenso." }, { status: 403 });
 
     const { data, error } = await supabase
       .from("produtos")
@@ -76,6 +92,17 @@ export async function PUT(request) {
       return NextResponse.json({ error: "O ID do produto é obrigatório para atualização." }, { status: 400 });
     }
 
+    // Segurança: Buscar a loja do produto para checar status
+    const { data: prodInfo } = await supabase.from("produtos").select("estabelecimento_id").eq("id", id).single();
+    if (prodInfo) {
+      const { data: est } = await supabase
+        .from("estabelecimentos")
+        .select("status")
+        .eq("id", prodInfo.estabelecimento_id)
+        .single();
+      if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado: estabelecimento suspenso." }, { status: 403 });
+    }
+
     // Se o nome vier preenchido, é uma atualização completa. Se não, é apenas o toggle de pausar produto.
     const dadosParaAtualizar = nome !== undefined ? {
       nome,
@@ -110,6 +137,17 @@ export async function DELETE(request) {
     const id = searchParams.get("id");
 
     if (!id) return NextResponse.json({ error: "ID ausente" }, { status: 400 });
+
+    // Segurança: Buscar a loja do produto para checar status
+    const { data: prodInfo } = await supabase.from("produtos").select("estabelecimento_id").eq("id", id).single();
+    if (prodInfo) {
+      const { data: est } = await supabase
+        .from("estabelecimentos")
+        .select("status")
+        .eq("id", prodInfo.estabelecimento_id)
+        .single();
+      if (est?.status === 'suspenso') return NextResponse.json({ error: "Acesso bloqueado: estabelecimento suspenso." }, { status: 403 });
+    }
 
     const { error } = await supabase.from("produtos").delete().eq("id", id);
 

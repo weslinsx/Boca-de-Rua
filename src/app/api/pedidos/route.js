@@ -1,7 +1,6 @@
 // src/app/api/pedidos/route.js
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
-import { supabaseAdmin } from "@/lib/supabaseAdmin"; // Importar o cliente admin
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // =========================================================================
 // 1. FUNÇÃO GET: Listar os pedidos no Painel (Trazendo os itens juntos)
@@ -15,8 +14,19 @@ export async function GET(request) {
       return NextResponse.json({ error: "estabelecimentoId é obrigatório" }, { status: 400 });
     }
 
+    // Segurança: Verificar se o estabelecimento está suspenso antes de liberar dados sensíveis
+    const { data: est, error: erroEst } = await supabaseAdmin
+      .from("estabelecimentos")
+      .select("status")
+      .eq("id", parseInt(estabelecimentoId))
+      .single();
+
+    if (erroEst || !est || est.status === 'suspenso') {
+      return NextResponse.json({ error: "Acesso bloqueado: estabelecimento suspenso ou inexistente." }, { status: 403 });
+    }
+
     // CORRIGIDO: Adicionado 'observacao_item:observacao' para garantir a leitura no front-end
-    const { data: pedidos, error } = await supabase
+    const { data: pedidos, error } = await supabaseAdmin
       .from("pedidos")
       .select(`
         *,
@@ -73,8 +83,19 @@ export async function POST(request) {
 
     const whatsappLimpo = clienteWhatsapp.replace(/\D/g, "");
 
+    // Segurança: Verificar se o estabelecimento está ativo para aceitar novos pedidos
+    const { data: est, error: erroEst } = await supabaseAdmin
+      .from("estabelecimentos")
+      .select("status")
+      .eq("id", parseInt(estabelecimentoId))
+      .single();
+
+    if (erroEst || !est || est.status !== 'ativo') {
+      return NextResponse.json({ error: "Este estabelecimento não está aceitando pedidos no momento." }, { status: 403 });
+    }
+
     // Inserir o cabeçalho do pedido
-    const { data: pedidoSalvo, error: errorPedido } = await supabase
+    const { data: pedidoSalvo, error: errorPedido } = await supabaseAdmin
       .from("pedidos")
       .insert([
         {
@@ -107,7 +128,7 @@ export async function POST(request) {
       observacao: item.observacao || null
     }));
 
-    const { error: errorItens } = await supabase
+    const { error: errorItens } = await supabaseAdmin
       .from("itens_pedido")
       .insert(itensParaInserir);
 
@@ -116,7 +137,7 @@ export async function POST(request) {
     let numeroFinal = pedidoSalvo.numero_pedido_parceiro;
     
     if (!numeroFinal) {
-      const { data: atualizado } = await supabase
+      const { data: atualizado } = await supabaseAdmin
         .from("pedidos")
         .select("numero_pedido_parceiro")
         .eq("id", pedidoSalvo.id)
@@ -150,6 +171,25 @@ export async function PATCH(request) {
 
     if (!pedidoId) {
       return NextResponse.json({ error: "O ID do pedido é obrigatório." }, { status: 400 });
+    }
+
+    // Segurança: Buscar o estabelecimento vinculado ao pedido para checar se o parceiro está suspenso
+    const { data: pedidoInfo } = await supabaseAdmin
+      .from("pedidos")
+      .select("estabelecimento_id")
+      .eq("id", parseInt(pedidoId))
+      .single();
+
+    if (pedidoInfo) {
+      const { data: est } = await supabaseAdmin
+        .from("estabelecimentos")
+        .select("status")
+        .eq("id", pedidoInfo.estabelecimento_id)
+        .single();
+
+      if (est?.status === 'suspenso') {
+        return NextResponse.json({ error: "Operação não permitida: estabelecimento suspenso." }, { status: 403 });
+      }
     }
 
     const dadosAtualizacao = {};

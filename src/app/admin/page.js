@@ -147,6 +147,7 @@ export default function AdminDashboard() {
       const res = await fetch(`/api/admin/estabelecimentos?id=${id}`, { method: "DELETE" });
       if (res.ok) {
         setSucesso("Parceiro removido do sistema.");
+        setLojaEditando(null); // Fecha o modal após a exclusão
         carregarLojas();
       }
     } catch (err) { setErro("Falha ao excluir registro."); }

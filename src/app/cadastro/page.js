@@ -118,7 +118,7 @@ function CadastroForm() {
               <input type="password" required value={formData.senha} onChange={(e) => setFormData({...formData, senha: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="••••••••" />
             </div>
             <div>
-              <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">WhatsApp do Comércio</label>
+            <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">WhatsApp do Comércio (Com DDD)</label>
               <input type="text" required value={formData.whatsapp} onChange={(e) => setFormData({...formData, whatsapp: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="91999999999" />
             </div>
           </div>

@@ -89,7 +89,7 @@ export default function HomePage() {
                     <span className="text-white">Pedido #1024</span>
                     <span className="text-amber-400">🕒 Novo</span>
                   </div>
-                  <p className="text-gray-400 text-[10px]">Cliente: Wesley Lins</p>
+                  <p className="text-gray-400 text-[10px]">Cliente: Mario Silva</p>
                   <div className="text-gray-300 bg-gray-900/50 p-1.5 rounded border border-gray-900">
                     1x Burger Especial Duplo<br/>
                     1x Batata Frita Grande
