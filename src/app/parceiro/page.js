@@ -55,6 +55,19 @@ export default function ParceiroDashboard() {
   }, [acoesRealizadas]);
 
   const [pedidoParaImpressao, setPedidoParaImpressao] = useState(null);
+  // Efeito para disparar a impressão quando pedidoParaImpressao é definido
+  useEffect(() => {
+    let printTimeout; // Declaração do timeout
+    if (pedidoParaImpressao) {
+      // Dá um pequeno tempo para o navegador renderizar o conteúdo e aplicar os estilos de impressão
+      printTimeout = setTimeout(() => { 
+        window.print();
+        setPedidoParaImpressao(null); // Limpa o estado APÓS a impressão ser iniciada
+      }, 100); // 100ms geralmente é suficiente
+    }
+    return () => clearTimeout(printTimeout); // Limpa o timeout se o componente for desmontado ou o estado mudar
+  }, [pedidoParaImpressao]);
+
   const [pedidoCorrigindo, setPedidoCorrigindo] = useState(null); // Modal de correção de status
 
   // Estado para os dados da Loja/Estabelecimento
@@ -697,15 +710,11 @@ export default function ParceiroDashboard() {
   };
 
   const handleImprimirPedido = (pedido) => {
-    setPedidoParaImpressao(pedido);
+    setPedidoParaImpressao({ ...pedido }); // Cria uma cópia do pedido para garantir que o estado seja atualizado e o useEffect dispare
     
-    setAcoesRealizadas(prev => ({
+    setAcoesRealizadas(prev => ({ // Marca como impresso para feedback visual
       ...prev, [pedido.id]: { ...prev[pedido.id], impresso: true }
     }));
-
-    setTimeout(() => {
-      window.print();
-    }, 500);
   };
 
   const getStatusBadge = (status) => {
@@ -767,7 +776,7 @@ export default function ParceiroDashboard() {
       `}} />
 
       {/* Área Oculta de Impressão Térmica 80mm/58mm */}
-      <div id="area-impressao-recibo" className="hidden">
+      <div id="area-impressao-recibo" className="fixed top-0 left-0 w-[80mm] h-auto bg-white text-black p-4 z-[9999] print:block hidden">
         {pedidoParaImpressao && (
           <div className="text-black bg-white">
             <h2 className="text-center font-bold text-lg">{loja?.nome}</h2>
@@ -964,7 +973,7 @@ export default function ParceiroDashboard() {
 
                       {/* Logística, Endereço e Metadados do Pedido */}
                       <div className="bg-gray-950/20 rounded-2xl p-4 text-[10px] text-gray-400 space-y-2 border border-gray-900/20 uppercase font-bold tracking-tight">
-                        <p><span className="text-gray-600">MODALIDADE:</span> {p.tipo_entrega === "delivery" ? "🚀 Delivery" : "🏪 Retirada"}</p>
+                        <p><span className="text-gray-600">ENTREGA:</span> {p.tipo_entrega === "delivery" ? "🚀 Delivery" : "🏪 Retirada"}</p>
                         {p.tipo_entrega === "delivery" && p.endereco_entrega && (
                           <p><span className="text-gray-600">ENDEREÇO:</span> <span className="text-gray-300">{p.endereco_entrega}</span></p>
                         )}
