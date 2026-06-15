@@ -47,21 +47,21 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#070a13] text-[#f9fafb] font-sans antialiased px-4 relative overflow-hidden selection:bg-amber-500/30">
-      
+
       {/* GLOWS ATMOSFÉRICOS TRASEIROS */}
       <div className="absolute -top-40 -left-40 w-96 h-96 bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-amber-500/10 rounded-full blur-[120px] pointer-events-none" />
 
       {/* CARD CENTRAL MOBILE-FIRST */}
       <div className="max-w-md w-full bg-[#121826]/80 backdrop-blur-md p-8 rounded-3xl shadow-2xl border border-gray-900/60 animate-fade-in-up transition-all duration-300">
-        
+
         {/* BRANDING */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gray-950 border border-gray-800/80 mb-4 shadow-xl transform transition-transform hover:scale-105 duration-300 overflow-hidden p-0">
-            <img 
-              src="/favicon.ico" 
-              alt="Logo Boca de Rua" 
-              className="w-full h-full object-cover select-none" 
+            <img
+              src="/favicon.ico"
+              alt="Logo Boca de Rua"
+              className="w-full h-full object-cover select-none"
             />
           </div>
           <h1 className="text-3xl font-black tracking-tight text-white bg-gradient-to-r from-white via-gray-200 to-amber-400 bg-clip-text text-transparent">
@@ -101,8 +101,8 @@ export default function LoginPage() {
               <label className="text-[10px] font-black uppercase text-gray-400 tracking-wider">
                 Sua senha
               </label>
-              <Link 
-                href="/recuperar-senha" 
+              <Link
+                href="/recuperar-senha"
                 className="text-[10px] font-bold text-amber-500 hover:text-amber-400 transition-colors tracking-wide h-6 flex items-center"
               >
                 Esqueceu a senha?
@@ -146,7 +146,7 @@ export default function LoginPage() {
         </div>
 
         {/* BOTÃO NATIVO DE RETORNO AO HISTÓRICO */}
-        <button 
+        <button
           type="button"
           onClick={() => router.push("/")}
           className="w-full h-12 border border-gray-800/80 hover:border-amber-500/40 bg-transparent hover:bg-amber-500/5 text-gray-300 hover:text-amber-400 font-bold rounded-2xl transition-all text-xs flex items-center justify-center gap-2 select-none active:scale-[0.99] touch-manipulation"

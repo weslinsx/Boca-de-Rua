@@ -9,7 +9,7 @@ import React from 'react';
  */
 
 const CardapioStatusDisplay = ({ statusNum, isAbertaAgora, onToggleStatus }) => {
-  
+
   const getStatusConfig = () => {
     // 1. [Dentro do Horário] E [Status = 1] -> Verde "No Ar"
     if (isAbertaAgora && statusNum === 1) {
@@ -49,7 +49,7 @@ const CardapioStatusDisplay = ({ statusNum, isAbertaAgora, onToggleStatus }) => 
     }
 
     // Fallback de segurança (Trata 1 ou 2 em estados inversos)
-    return !isAbertaAgora 
+    return !isAbertaAgora
       ? { color: 'bg-rose-500', text: 'Fora do Ar', desc: 'Fechado pelo sistema.', ping: 'bg-rose-400' }
       : { color: 'bg-emerald-500', text: 'No Ar', desc: 'Aberto pelo sistema.', ping: 'bg-emerald-400' };
   };
@@ -65,9 +65,9 @@ const CardapioStatusDisplay = ({ statusNum, isAbertaAgora, onToggleStatus }) => 
             <span className={`absolute inline-flex h-full w-full rounded-full ${cfg.ping} opacity-20 animate-ping`}></span>
             <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${cfg.color} shadow-[0_0_12px_${cfg.color === 'bg-emerald-500' ? '#10b981' : '#f43f5e'}]`}></span>
           </div>
-          
+
           <div className="text-center sm:text-left">
-             {/* Título e Badge de Controle Manual aparecem apenas nos estados 3 e 4 */}
+            {/* Título e Badge de Controle Manual aparecem apenas nos estados 3 e 4 */}
             {(statusNum === 3 || statusNum === 4) && (
               <div className="flex items-center justify-center sm:justify-start gap-2 mb-1">
                 <h2 className="text-base font-black uppercase tracking-[0.15em] text-white">{cfg.text}</h2>
@@ -82,13 +82,13 @@ const CardapioStatusDisplay = ({ statusNum, isAbertaAgora, onToggleStatus }) => 
 
         {/* BOTÕES DE AÇÃO MINIMALISTAS */}
         <div className="flex gap-2 w-full sm:w-auto">
-          <button 
+          <button
             onClick={() => onToggleStatus(statusNum === 3 ? 1 : 3)}
             className={`flex-1 sm:flex-none h-11 px-6 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${statusNum === 3 ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-white'}`}
           >
             {statusNum === 3 ? '✓ Forçar Ativo' : 'Ativar Cardápio'}
           </button>
-          <button 
+          <button
             onClick={() => onToggleStatus(statusNum === 4 ? 1 : 4)}
             className={`flex-1 sm:flex-none h-11 px-6 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${statusNum === 4 ? 'bg-rose-600 border-rose-500 text-white' : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-white'}`}
           >

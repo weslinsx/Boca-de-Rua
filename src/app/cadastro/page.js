@@ -8,15 +8,15 @@ import { formatarTelefone } from "@/app/utils/whatsapp";
 function CadastroForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   const [token, setToken] = useState("");
   const [formData, setFormData] = useState({
     nome: "", email: "", senha: "", nomeLoja: "", slug: "", whatsapp: ""
   });
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
-  
- // Automação: Gerador de Slug em tempo real
+
+  // Automação: Gerador de Slug em tempo real
   const handleNomeLojaChange = (e) => {
     const nome = e.target.value;
     const slugSugerido = nome
@@ -66,7 +66,7 @@ function CadastroForm() {
 
   return (
     <div className="min-h-screen bg-[#070a13] text-[#f9fafb] flex items-center justify-center p-4 relative overflow-hidden selection:bg-amber-500/30">
-      
+
       {/* GLOWS ATMOSFÉRICOS */}
       <div className="absolute -top-40 -left-40 w-96 h-96 bg-orange-600/10 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-amber-500/10 rounded-full blur-[120px] pointer-events-none" />
@@ -76,7 +76,7 @@ function CadastroForm() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gray-950 border border-gray-800/80 mb-4 shadow-xl overflow-hidden p-0">
             <img src="/favicon.ico" alt="Logo" className="w-full h-full object-cover select-none" />
           </div>
-          <br/>
+          <br />
           <span className="bg-amber-950/40 text-amber-500 border border-amber-900/40 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.2em]">
             Onboarding de Parceiro
           </span>
@@ -94,7 +94,7 @@ function CadastroForm() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Token de Convite Autorizado</label>
-            <input 
+            <input
               type="text" required value={token} onChange={(e) => setToken(e.target.value)}
               className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 font-mono text-xs text-amber-500 focus:outline-none focus:border-amber-500 transition-all placeholder:text-gray-800"
               placeholder="UUID do convite"
@@ -104,22 +104,22 @@ function CadastroForm() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Seu Nome Completo</label>
-              <input type="text" required value={formData.nome} onChange={(e) => setFormData({...formData, nome: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="Ex: Wesley Lins" />
+              <input type="text" required value={formData.nome} onChange={(e) => setFormData({ ...formData, nome: e.target.value })} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="Ex: Wesley Lins" />
             </div>
             <div>
               <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">E-mail de Acesso</label>
-              <input type="email" required value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="seu@email.com" />
+              <input type="email" required value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="seu@email.com" />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Senha de Entrada</label>
-              <input type="password" required value={formData.senha} onChange={(e) => setFormData({...formData, senha: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="••••••••" />
+              <input type="password" required value={formData.senha} onChange={(e) => setFormData({ ...formData, senha: e.target.value })} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="••••••••" />
             </div>
             <div>
-            <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">WhatsApp do Comércio (Com DDD)</label>
-              <input type="text" required value={formData.whatsapp} onChange={(e) => setFormData({...formData, whatsapp: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="91999999999" />
+              <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">WhatsApp do Comércio (Com DDD)</label>
+              <input type="text" required value={formData.whatsapp} onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all font-medium placeholder:text-gray-700" placeholder="91999999999" />
             </div>
           </div>
 
@@ -132,7 +132,7 @@ function CadastroForm() {
               <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Link Exclusivo (Slug)</label>
               <div className="flex items-center bg-gray-950 border border-gray-800 rounded-2xl overflow-hidden focus-within:border-amber-500 transition-all">
                 <span className="bg-gray-900 px-3 text-xs text-gray-500 border-r border-gray-800 py-3.5 font-black">/</span>
-                <input type="text" required value={formData.slug} onChange={(e) => setFormData({...formData, slug: e.target.value})} className="w-full bg-transparent px-4 text-sm text-amber-500 font-mono focus:outline-none" placeholder="link-da-loja" />
+                <input type="text" required value={formData.slug} onChange={(e) => setFormData({ ...formData, slug: e.target.value })} className="w-full bg-transparent px-4 text-sm text-amber-500 font-mono focus:outline-none" placeholder="link-da-loja" />
               </div>
             </div>
           </div>

@@ -11,7 +11,7 @@ import Link from "next/link";
 function ResetForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   // Recupera os dados injetados no link gerado pelo Admin
   const email = searchParams.get("email") || "";
   const token = searchParams.get("token") || "";
@@ -91,7 +91,7 @@ function ResetForm() {
           Nova Senha
         </h1>
         <p className="text-xs text-gray-400 mt-2 font-medium">
-          Criando novo acesso para:<br/>
+          Criando novo acesso para:<br />
           <span className="text-amber-500 font-bold uppercase tracking-tight">{email || "Usuário"}</span>
         </p>
       </div>
@@ -138,7 +138,7 @@ export default function ResetPasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-[#070a13] px-4 relative overflow-hidden">
       <div className="absolute -top-40 -left-40 w-96 h-96 bg-orange-600/5 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-amber-500/5 rounded-full blur-[120px] pointer-events-none" />
-      
+
       <Suspense fallback={<div className="text-amber-500 font-black text-xs uppercase tracking-[0.2em] animate-pulse">Carregando Ambiente...</div>}>
         <ResetForm />
       </Suspense>

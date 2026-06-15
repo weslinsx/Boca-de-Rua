@@ -20,13 +20,13 @@ export async function PUT(request) {
 
     // Montar objeto de atualização dinâmico (apenas o que foi enviado)
     const updateData = { atualizado_em: new Date() };
-    
+
     // Lista de campos que permitimos atualizar
     const camposPermitidos = [
-      'logo_url', 'banner_url', 'telefone_whatsapp', 
+      'logo_url', 'banner_url', 'telefone_whatsapp',
       'endereco', 'horarios_funcionamento', 'status_cardapio' // Removido manual_status_set_at
     ];
-    
+
     camposPermitidos.forEach(campo => {
       if (body[campo] !== undefined) {
         updateData[campo] = body[campo];

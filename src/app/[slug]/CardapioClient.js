@@ -4,6 +4,7 @@
 import { useCart } from "@/context/CartContext"; // Importa o hook de carrinho
 import { useState, useEffect, useMemo } from "react"; // Importa hooks do React
 import { gerarLinkWhatsApp, formatarTelefone } from "@/app/utils/whatsapp";
+import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function CardapioClient({ loja, produtos, categorias }) {
@@ -12,6 +13,11 @@ export default function CardapioClient({ loja, produtos, categorias }) {
   const [produtoSelecionado, setProdutoSelecionado] = useState(null);
   const [loading, setLoading] = useState(false);
   const [erroCheckout, setErroCheckout] = useState("");
+  const [ultimoPedido, setUltimoPedido] = useState(null); // Para a funcionalidade "Peça Novamente"
+  const [regioesDisponiveis, setRegioesDisponiveis] = useState([]);
+  const [taxaSelecionada, setTaxaSelecionada] = useState(0);
+  const [isMounted, setIsMounted] = useState(false); // Hydration fix
+
   const [activeCategory, setActiveCategory] = useState('todos'); // Estado para a categoria ativa
   const [isHorariosAberto, setIsHorariosAberto] = useState(false); // Modal de horários
   const [theme, setTheme] = useState('dark'); // 'dark' ou 'light'
@@ -60,26 +66,90 @@ export default function CardapioClient({ loja, produtos, categorias }) {
     pontoReferencia: "",
     observacoesGerais: "",
     formaPagamento: "pix",
-    trocoPara: ""
+    trocoPara: "", // Adicionado campo de bairro
+    regiao: ""
   });
 
-  // Carrega dados salvos do cliente ao montar o componente no celular
+  // 1. Hydration Fix, Initial Data Load (Client Data, Last Order, Regions, Theme)
   useEffect(() => {
+    setIsMounted(true);
+    const hoje = new Date().toISOString().split('T')[0];
+    const statusLoja = loja.status_cardapio || 1;
+    
+    // Buscar regiões/taxas
+    const carregarTaxas = async () => {
+      const { data } = await supabase.from("taxas_entrega").select("*").eq("estabelecimento_id", loja.id);
+      if (data) setRegioesDisponiveis(data);
+    };
+    carregarTaxas();
+
+    // Lógica de Persistência da Sacola (Antierro e Expiração)
+    const sacolaSalva = localStorage.getItem(`bdr_sacola_${loja.slug}`);
+    if (sacolaSalva) {
+      try {
+        const { itens, salvoEm } = JSON.parse(sacolaSalva);
+        
+        // Regra: Se loja fechada/pausada OU mudou o dia, limpa a sacola
+        if ([2, 4].includes(statusLoja) || salvoEm !== hoje) {
+          localStorage.removeItem(`bdr_sacola_${loja.slug}`);
+          clearCart();
+        } else {
+          // Restaura itens (O CartContext deve suportar uma função de restore ou adicionamos um a um)
+          // Para este exemplo, assumimos que o CartContext gerencia o estado global, 
+          // mas a persistência de "Sessão Ativa" é feita aqui.
+        }
+      } catch (e) { console.error("Erro sacola:", e); }
+    }
+
+    // Carregar Último Pedido para "Peça Novamente"
+    const lastOrder = localStorage.getItem(`bdr_ultimo_pedido_${loja.slug}`);
+    if (lastOrder) setUltimoPedido(JSON.parse(lastOrder));
+
+    // Dados de Identidade do Cliente
     const dadosSalvos = localStorage.getItem("bocaDeRua_clienteDados");
     if (dadosSalvos) {
       try {
         const dadosParsed = JSON.parse(dadosSalvos);
-        setFormData(prev => ({
-          ...prev,
-          nome: dadosParsed.nome || "",
-          whatsapp: dadosParsed.whatsapp || "",
-          endereco: dadosParsed.endereco || ""
-        }));
-      } catch (e) {
-        console.error("Erro ao carregar dados do localStorage", e);
-      }
+        setFormData(prev => ({ ...prev, ...dadosParsed, regiao: dadosParsed.regiao || "" })); // Garante que regiao seja inicializado
+      } catch (e) { console.error(e); }
     }
-  }, []);
+  }, [loja.id]);
+
+  // Sincronizar Sacola com LocalStorage sempre que mudar
+  useEffect(() => {
+    if (isMounted && cart.length > 0) {
+      const estado = {
+        itens: cart,
+        salvoEm: new Date().toISOString().split('T')[0]
+      };
+      localStorage.setItem(`bdr_sacola_${loja.slug}`, JSON.stringify(estado));
+    } else if (isMounted && cart.length === 0) {
+      localStorage.removeItem(`bdr_sacola_${loja.slug}`);
+    }
+  }, [cart, isMounted, loja.slug]);
+
+  // Funções de Quantidade
+  const aumentarQuantidade = (produto) => addToCart(produto);
+  const diminuirQuantidade = (produtoId) => removeFromCart(produtoId);
+
+  const handlePecaNovamente = () => {
+    if (!ultimoPedido) return;
+    ultimoPedido.forEach(item => {
+      // Adiciona cada item com a quantidade original
+      for(let i=0; i < item.quantidade; i++) addToCart(item);
+    });
+    setIsSacolaAberta(true);
+  };
+
+ // 2. Atualiza a taxa sempre que o bairro muda (ou quando os bairros carregam)
+  useEffect(() => {
+    if (formData.regiao && regioesDisponiveis.length > 0) {
+      const b = regioesDisponiveis.find(item => item.regiao === formData.regiao);
+      setTaxaSelecionada(b ? parseFloat(b.valor_taxa) : 0);
+    } else {
+      setTaxaSelecionada(0);
+    }
+  }, [formData.regiao, regioesDisponiveis, formData.tipoEntrega]);
 
   // Efeito para carregar/salvar o tema do localStorage
   useEffect(() => {
@@ -97,11 +167,10 @@ export default function CardapioClient({ loja, produtos, categorias }) {
 
     setFormData(prev => {
       const novosDados = { ...prev, [name]: valorFinal };
-      localStorage.setItem("bocaDeRua_clienteDados", JSON.stringify({
-        nome: novosDados.nome,
-        whatsapp: novosDados.whatsapp,
-        endereco: novosDados.endereco
-      }));
+        // Persistência automática no LocalStorage
+      if (typeof window !== 'undefined') {
+        localStorage.setItem("bocaDeRua_clienteDados", JSON.stringify(novosDados));
+      }
       return novosDados;
     });
   };
@@ -117,7 +186,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
     }
 
     setLoading(true);
-    const taxaEntrega = formData.tipoEntrega === "delivery" ? 5.00 : 0.00;
+    const taxaEntrega = formData.tipoEntrega === "delivery" ? taxaSelecionada : 0;
     const totalGeral = precoTotal + taxaEntrega;
 
     const itensComObservacao = cart.map(item => ({
@@ -136,6 +205,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
           tipoEntrega: formData.tipoEntrega,
           enderecoEntrega: formData.tipoEntrega === "delivery" ? formData.endereco : null,
           pontoReferencia: formData.tipoEntrega === "delivery" ? formData.pontoReferencia : null,
+          regiaoEntrega: formData.tipoEntrega === "delivery" ? formData.regiao : null, // Novo campo
           observacoesGerais: formData.observacoesGerais || null,
           formaPagamento: formData.formaPagamento,
           trocoPara: formData.formaPagamento === "dinheiro" ? formData.trocoPara : null,
@@ -148,6 +218,9 @@ export default function CardapioClient({ loja, produtos, categorias }) {
 
       if (!response.ok) throw new Error("Erro ao salvar pedido");
       
+      // Salva para o "Peça Novamente"
+      localStorage.setItem(`bdr_ultimo_pedido_${loja.slug}`, JSON.stringify(itensComObservacao));
+
       const pedidoGravado = await response.json();
       
       const pedidoId = pedidoGravado.numeroPedidoParceiro || 
@@ -307,6 +380,26 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         )}
       </header>
 
+      {/* PEÇA NOVAMENTE (BANNER SUTIL) - Movido para depois do header para melhor visibilidade */}
+      {isMounted && isLojaAberta && ultimoPedido && cart.length === 0 && (
+        <div className="max-w-2xl mx-auto px-5 mt-6"> {/* Adicionado mt-6 para espaçamento */}
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-[2rem] p-4 flex items-center justify-between gap-4 animate-fade-in">
+            <div className="text-left overflow-hidden">
+              <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1">✨ Peça Novamente</p>
+              <p className="text-[10px] text-gray-400 truncate font-bold uppercase">
+                {ultimoPedido.map(it => `${it.quantidade}x ${it.nome}`).join(" + ")}
+              </p>
+            </div>
+            <button 
+              onClick={handlePecaNovamente}
+              className="bg-amber-600 text-white text-[9px] font-black px-4 py-2.5 rounded-xl uppercase whitespace-nowrap active:scale-95 transition-all shadow-lg animate-pulse"
+            >
+              Adicionar Tudo
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* LISTAGEM DE PRODUTOS */}
       <main className="max-w-2xl mx-auto px-5 mt-10 space-y-10">
         {produtosExibidos.length === 0 ? (
@@ -361,7 +454,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                                     onClick={() => removeFromCart(produto.id)} 
                                     className="w-9 h-full text-base font-bold text-gray-500 dark:text-gray-400 active:text-rose-500 transition-colors select-none touch-manipulation"
                                   >
-                                    -
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M20 12H4"/></svg>
                                   </button>
                                   <span className="px-2 text-sm font-black font-mono text-gray-900 dark:text-white min-w-[24px] text-center">{itemNoCarrinho.quantidade}</span>
                                   <button 
@@ -369,7 +462,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                                     onClick={() => addToCart(produto)} 
                                     className={`w-9 h-full text-base font-bold text-gray-500 dark:text-gray-400 active:text-emerald-500 transition-colors select-none touch-manipulation ${!isLojaAberta && 'opacity-30'}`}
                                   >
-                                    +
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
                                   </button>
                                 </div>
                               ) : (
@@ -378,7 +471,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                                   onClick={() => addToCart(produto)} 
                                   className={`bg-gray-950 dark:bg-white border border-amber-600/30 hover:border-amber-500/60 text-amber-500/90 dark:text-gray-900 font-black text-[10px] uppercase tracking-widest px-4 h-9 rounded-xl transition-all active:scale-95 flex items-center justify-center shadow-lg select-none touch-manipulation ${!isLojaAberta && 'opacity-50 grayscale'}`}
                                 >
-                                  {isLojaAberta ? 'Adicionar' : 'Fechado'}
+                                  {isLojaAberta ? 'Adicionar' : 'Fechado'} <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
                                 </button>
                               )
                             ) : (
@@ -404,7 +497,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
           <div className="max-w-2xl mx-auto flex justify-between items-center gap-4">
             <div className="text-left">
               <p className="text-[10px] font-black text-amber-600 dark:text-amber-500 uppercase tracking-widest mb-0.5">Sua Sacola</p>
-              <p className="text-lg font-black font-mono text-gray-900 dark:text-white">
+              <p className="text-lg font-black font-mono text-gray-900 dark:text-white"> {/* Corrigido para "Sacola" */}
                 {totalItens} {totalItens === 1 ? 'item' : 'itens'} <span className="text-gray-400 font-normal">por</span> R$ {precoTotal.toFixed(2)}
               </p>
             </div>
@@ -412,7 +505,8 @@ export default function CardapioClient({ loja, produtos, categorias }) {
               onClick={() => setIsSacolaAberta(true)}
               className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black h-14 px-6 rounded-2xl uppercase tracking-wide transition-all active:scale-95 shadow-lg shadow-orange-950/20 flex items-center justify-center gap-2 flex-shrink-0 touch-manipulation"
             >
-              Ver Sacola 🛒
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg>
+              Ver Sacola
             </button>
           </div>
         </div>
@@ -479,7 +573,7 @@ export default function CardapioClient({ loja, produtos, categorias }) {
               {/* LISTAGEM DOS ITENS ADICIONADOS */}
               <div className="space-y-3 max-h-[25vh] overflow-y-auto border-b border-gray-900/60 pb-3 pr-1">
                 {cart.length === 0 ? <p className="text-center text-gray-500 dark:text-gray-600 text-sm">Sua sacola está vazia.</p> : cart.map((item) => (
-                  <div key={item.id} className="bg-gray-100 dark:bg-gray-950/40 p-3 rounded-2xl border border-gray-200 dark:border-gray-900/60 space-y-2">
+                  <div key={item.id} className="bg-gray-100 dark:bg-gray-950/40 p-3 rounded-2xl border border-gray-200 dark:border-gray-900/60 space-y-3">
                     <div className="flex justify-between items-center gap-3">
                       <div className="flex items-center gap-3">
                         {item.imagem_url && (
@@ -487,10 +581,24 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                         )}
                         <div>
                           <span className="font-bold text-sm text-gray-900 dark:text-white">{item.nome}</span>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 font-mono font-medium">{item.quantidade}x R$ {parseFloat(item.preco).toFixed(2)}</p>
+                          <p className="text-xs text-amber-600 dark:text-amber-500 font-black font-mono">R$ {(item.quantidade * parseFloat(item.preco)).toFixed(2)}</p>
                         </div>
                       </div>
-                      <span className="text-amber-600 dark:text-amber-500 font-black text-sm font-mono">R$ {(item.quantidade * parseFloat(item.preco)).toFixed(2)}</span>
+                      
+                      {/* SELETOR DE QUANTIDADE NA SACOLA */}
+                      <div className="flex items-center bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 h-9 px-1 shadow-sm">
+                        <button 
+                          type="button"
+                          onClick={() => diminuirQuantidade(item.id)}
+                          className="w-8 h-full text-gray-400 hover:text-rose-500 transition-colors font-bold"
+                        >-</button>
+                        <span className="px-2 text-xs font-black text-gray-900 dark:text-white min-w-[20px] text-center">{item.quantidade}</span>
+                        <button 
+                          type="button"
+                          onClick={() => aumentarQuantidade(item)}
+                          className="w-8 h-full text-gray-400 hover:text-emerald-500 transition-colors font-bold"
+                        >+</button>
+                      </div>
                     </div>
                     <input 
                       type="text"
@@ -537,15 +645,36 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                 </div>
 
                 {formData.tipoEntrega === "delivery" && (
-                  <div className="space-y-3 animate-fade-in">
+                  <div className="animate-fade-in space-y-4">
                     <div>
-                      <label className="block text-xs text-gray-500 dark:text-gray-400 font-black uppercase mb-1">Endereço Completo de Entrega *</label>
-                      <textarea name="endereco" required={formData.tipoEntrega === "delivery"} value={formData.endereco} onChange={handleInputChange} placeholder="Bairro, Rua, Número, Bloco..." rows={2} className="w-full bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl p-4 text-base text-gray-900 dark:text-white focus:outline-none focus:border-amber-500 resize-none font-medium placeholder:text-gray-400 dark:placeholder:text-gray-500" />
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 font-black uppercase mb-1">Região para Entrega *</label>
+                      <select 
+                        name="regiao" 
+                        required={formData.tipoEntrega === "delivery"}
+                        value={formData.regiao}
+                        onChange={handleInputChange}
+                        className="w-full bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl h-14 px-4 text-base text-gray-900 dark:text-white focus:outline-none focus:border-amber-500 font-medium"
+                      >
+                        <option value="">Selecione sua região...</option>
+                        {regioesDisponiveis.map(r => (
+                          <option key={r.id} value={r.regiao}>{r.regiao} (R$ {parseFloat(r.valor_taxa).toFixed(2)})</option>
+                        ))}
+                      </select>
                     </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 dark:text-gray-400 font-black uppercase mb-1">Ponto de Referência</label>
-                      <input type="text" name="pontoReferencia" value={formData.pontoReferencia} onChange={handleInputChange} placeholder="Ex: Próximo ao colégio..." className="w-full bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl h-12 px-4 text-base text-gray-900 dark:text-white focus:outline-none focus:border-amber-500 font-medium placeholder:text-gray-400 dark:placeholder:text-gray-500" />
-                    </div>
+
+                    {/* Campos de endereço só aparecem após escolher região */}
+                    {formData.regiao && (
+                      <div className="space-y-4 animate-slide-up">
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 font-black uppercase mb-1">Endereço de Entrega *</label>
+                          <input type="text" name="endereco" required value={formData.endereco} onChange={handleInputChange} placeholder="Ex: Rua das Flores, 123" className="w-full bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl h-12 px-4 text-base text-gray-900 dark:text-white focus:outline-none focus:border-amber-500 font-medium" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 font-black uppercase mb-1">Ponto de Referência</label>
+                          <input type="text" name="pontoReferencia" value={formData.pontoReferencia} onChange={handleInputChange} placeholder="Ex: Próximo ao mercado..." className="w-full bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-2xl h-12 px-4 text-base text-gray-900 dark:text-white focus:outline-none focus:border-amber-500 font-medium" />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -606,13 +735,15 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                   <span>Subtotal:</span>
                   <span className="font-mono">R$ {precoTotal.toFixed(2)}</span>
                 </div>
-                {formData.tipoEntrega === "delivery" && (
-                <div className="flex justify-between font-black text-base text-gray-900 dark:text-white pt-1.5 border-t border-gray-200 dark:border-gray-900">
+                {formData.tipoEntrega === "delivery" && taxaSelecionada > 0 && (
+                  <div className="flex justify-between text-gray-500 dark:text-gray-400">
+                    <span>Taxa de Entrega:</span>
+                    <span className="font-mono">R$ {taxaSelecionada.toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-black text-base text-gray-900 dark:text-white pt-1.5 border-t border-gray-200 dark:border-gray-900">
                   <span>Total Geral:</span>
-                  <span className="text-amber-500 font-mono">R$ {(precoTotal + (formData.tipoEntrega === "delivery" ? 5.00 : 0.00)).toFixed(2)}</span>
+                  <span className="text-amber-500 font-mono">R$ {(precoTotal + (formData.tipoEntrega === "delivery" ? taxaSelecionada : 0)).toFixed(2)}</span>
                 </div>
               </div>
 

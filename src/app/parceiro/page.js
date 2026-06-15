@@ -33,7 +33,7 @@ export default function ParceiroDashboard() {
   const [filtroPedidos, setFiltroPedidos] = useState("");
   const [viewPrincipal, setViewPrincipal] = useState("pedidos"); // 'pedidos' | 'cardapio' | 'configuracoes'
   const [abaPedidos, setAbaPedidos] = useState("pendentes");
-  
+
   // Controle do Calendário Customizado
   const [isCalendarioAberto, setIsCalendarioAberto] = useState(false);
   const [viewMes, setViewMes] = useState(new Date().getMonth());
@@ -50,6 +50,42 @@ export default function ParceiroDashboard() {
     return {};
   });
 
+  // Gestão de Taxas de Entrega
+  const [taxasEntrega, setTaxasEntrega] = useState([]);
+  const [novaTaxa, setNovaTaxa] = useState({ regiao: "", valor: "" });
+  const [loadingTaxas, setLoadingTaxas] = useState(false);
+
+  const buscarTaxas = useCallback(async () => {
+    if (!loja?.id) return;
+    const { data, error } = await supabase
+      .from("taxas_entrega")
+      .select("*")
+      .eq("estabelecimento_id", loja.id)
+      .order("regiao", { ascending: true });
+    if (!error) setTaxasEntrega(data);
+  }, [loja?.id]);
+
+  const handleAdicionarTaxa = async (e) => {
+    e.preventDefault();
+    if (!novaTaxa.regiao || !novaTaxa.valor) return;
+    setLoadingTaxas(true);
+    const { error } = await supabase.from("taxas_entrega").insert([{
+      estabelecimento_id: loja.id,
+      regiao: novaTaxa.regiao.trim(),
+      valor_taxa: parseFloat(novaTaxa.valor.replace(",", "."))
+    }]);
+    if (!error) { // Se não houver erro, limpa o formulário e busca as taxas novamente
+      setNovaTaxa({ regiao: "", valor: "" });
+      buscarTaxas();
+    } else alert("Erro ao adicionar bairro. Talvez ele já esteja cadastrado?");
+    setLoadingTaxas(false);
+  };
+
+  const handleExcluirTaxa = async (id) => {
+    const { error } = await supabase.from("taxas_entrega").delete().eq("id", id);
+    if (!error) buscarTaxas();
+  };
+
   useEffect(() => {
     localStorage.setItem("bDR_acoes_pedidos", JSON.stringify(acoesRealizadas));
   }, [acoesRealizadas]);
@@ -60,7 +96,7 @@ export default function ParceiroDashboard() {
     let printTimeout; // Declaração do timeout
     if (pedidoParaImpressao) {
       // Dá um pequeno tempo para o navegador renderizar o conteúdo e aplicar os estilos de impressão
-      printTimeout = setTimeout(() => { 
+      printTimeout = setTimeout(() => {
         window.print();
         setPedidoParaImpressao(null); // Limpa o estado APÓS a impressão ser iniciada
       }, 100); // 100ms geralmente é suficiente
@@ -71,17 +107,17 @@ export default function ParceiroDashboard() {
   const [pedidoCorrigindo, setPedidoCorrigindo] = useState(null); // Modal de correção de status
 
   // Estado para os dados da Loja/Estabelecimento
-  const [lojaForm, setLojaForm] = useState({ 
-    logo_url: "", 
-    banner_url: "", 
-    telefone_whatsapp: "", 
+  const [lojaForm, setLojaForm] = useState({
+    logo_url: "",
+    banner_url: "",
+    telefone_whatsapp: "",
     endereco: "",
     horarios_funcionamento: null
   });
 
   // Estados do Formulário de Produto
   const [form, setForm] = useState({ nome: "", descricao: "", preco: "", categoriaId: "1", imagemUrl: "" });
-  const [editandoId, setEditandoId] = useState(null); 
+  const [editandoId, setEditandoId] = useState(null);
   const [erroForm, setErroForm] = useState("");
   const [cadastrando, setCadastrando] = useState(false);
   const [categorias, setCategorias] = useState([]);
@@ -103,13 +139,14 @@ export default function ParceiroDashboard() {
   // Chame essa função junto com o seu carregamento inicial (no useEffect que já existe)
   useEffect(() => {
     buscarCategorias();
+    buscarTaxas();
 
     // Registrar Service Worker e Pedir Permissão para Notificações
     if ('serviceWorker' in navigator && 'PushManager' in window) {
       navigator.serviceWorker.register('/sw.js')
         .then((reg) => {
           console.log('Service Worker registrado com sucesso!', reg);
-          
+
           // Solicita permissão ao usuário
           Notification.requestPermission().then((permission) => {
             if (permission === 'granted') {
@@ -134,7 +171,7 @@ export default function ParceiroDashboard() {
 
     const dadosUser = JSON.parse(sessao);
     if (dadosUser.role !== "parceiro") { router.push("/login"); return; }
-    
+
     setUser(dadosUser);
     carregarDadosParceiro(dadosUser.id);
   }, [router]);
@@ -156,7 +193,7 @@ export default function ParceiroDashboard() {
   // Efeito de Polling: Atualiza os pedidos a cada 15 segundos se estiver na aba de pedidos
   useEffect(() => {
     if (!loja?.id || viewPrincipal !== "pedidos") return;
-    
+
     const intervalo = setInterval(() => buscarPedidos(), 30000);
     return () => clearInterval(intervalo);
   }, [buscarPedidos, loja?.id, viewPrincipal]);
@@ -200,11 +237,11 @@ export default function ParceiroDashboard() {
       ...prev, [pedidoId]: { ...prev[pedidoId], [campo]: true }
     }));
   };
-  
-    // Função para avisar cliente sobre entrega no WhatsApp
+
+  // Função para avisar cliente sobre entrega no WhatsApp
   const avisarEntregaWhatsApp = useCallback((p) => {
     if (!p || !p.cliente_whatsapp) return;
-    
+
     // Remove qualquer caractere que não seja número (parênteses, espaços, traços)
     const whatsappLimpo = p.cliente_whatsapp.replace(/\D/g, "");
     const telefoneFinal = whatsappLimpo.startsWith("55") && whatsappLimpo.length >= 12 ? whatsappLimpo : `55${whatsappLimpo}`;
@@ -216,13 +253,13 @@ export default function ParceiroDashboard() {
 
     // Usamos encodeURIComponent diretamente e o endpoint oficial api.whatsapp.com para maior estabilidade
     const zapUrl = `https://api.whatsapp.com/send?phone=${telefoneFinal}&text=${encodeURIComponent(textoMensagem)}`;
-    
+
     window.open(zapUrl, '_blank');
     marcarAcao(p.id, "avisado");
   }, [loja?.nome]);
 
   // 1. Filtro de Busca (Global - Varre todos os status e datas)
-  const pedidosFiltrados = useMemo(() => pedidos.filter(p => 
+  const pedidosFiltrados = useMemo(() => pedidos.filter(p =>
     p.cliente_nome?.toLowerCase().includes(filtroPedidos.toLowerCase()) ||
     (p.numero_pedido_parceiro || p.id).toString().includes(filtroPedidos)
   ), [pedidos, filtroPedidos]);
@@ -230,7 +267,7 @@ export default function ParceiroDashboard() {
   // 2. Filtros específicos por aba (Subconjuntos da busca)
   const pedidosPendentes = useMemo(() => pedidosFiltrados.filter(p => p.status === 'pendente'), [pedidosFiltrados]);
   const pedidosEmPreparo = useMemo(() => pedidosFiltrados.filter(p => ['confirmado', 'saiu_entrega'].includes(p.status)), [pedidosFiltrados]);
-  
+
   const historicoPedidos = useMemo(() => pedidosFiltrados.filter(p => {
     const isStatusFinal = ['finalizado', 'cancelado'].includes(p.status);
     if (!isStatusFinal) return false;
@@ -292,7 +329,7 @@ export default function ParceiroDashboard() {
       // Configura a repetição a cada 1 minuto (60000ms)
       intervalo = setInterval(() => {
         dispararAlertaNovoPedido();
-      }, 60000); 
+      }, 60000);
     }
 
     return () => {
@@ -353,7 +390,7 @@ export default function ParceiroDashboard() {
       }
       const dadosPed = await resPed.json();
       setPedidos(dadosPed);
-      
+
     } catch (err) {
       console.error("Erro na carga inicial do painel:", err.message);
       alert(`Falha crítica de comunicação: ${err.message}`);
@@ -386,7 +423,7 @@ export default function ParceiroDashboard() {
   // Função Auxiliar para Processar Status em Tempo Real
   const isAbertaAgora = useMemo(() => {
     if (!lojaForm.horarios_funcionamento) return false;
-    
+
     const agora = new Date();
     // Mapeamento JS (0-6) para o seu JSON (seg-dom)
     const dias = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
@@ -399,12 +436,12 @@ export default function ParceiroDashboard() {
     const horaAtualMinutos = agora.getHours() * 60 + agora.getMinutes();
     const [hIni, mIni] = config.inicio.split(':').map(Number);
     const [hFim, mFim] = config.fim.split(':').map(Number);
-    
+
     const inicioMinutos = hIni * 60 + mIni;
     let fimMinutos = hFim * 60 + mFim;
 
     // Tratamento para horários que atravessam a meia-noite (ex: até 02:00)
-    if (fimMinutos <= inicioMinutos) fimMinutos += 1440; 
+    if (fimMinutos <= inicioMinutos) fimMinutos += 1440;
 
     return horaAtualMinutos >= inicioMinutos && horaAtualMinutos <= fimMinutos;
   }, [lojaForm.horarios_funcionamento]);
@@ -427,8 +464,8 @@ export default function ParceiroDashboard() {
         console.error("Erro na API:", errorData.error);
         alert("Erro ao mudar status: " + errorData.error);
       }
-    } catch (err) { 
-      console.error("Erro ao mudar status", err); 
+    } catch (err) {
+      console.error("Erro ao mudar status", err);
     }
   }, [loja?.id, setLoja]);
 
@@ -446,7 +483,7 @@ export default function ParceiroDashboard() {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao salvar dados da loja.");
-      
+
       setLoja(data.estabelecimento);
       alert("Dados da loja atualizados com sucesso!");
     } catch (err) {
@@ -461,8 +498,8 @@ export default function ParceiroDashboard() {
 
     const url = "/api/parceiro/produtos";
     const metodo = editandoId ? "PUT" : "POST";
-    const corpoRequisicao = editandoId 
-      ? { id: editandoId, ...form } 
+    const corpoRequisicao = editandoId
+      ? { id: editandoId, ...form }
       : { estabelecimentoId: loja.id, ...form };
 
     try {
@@ -499,9 +536,9 @@ export default function ParceiroDashboard() {
       descricao: produto.descricao || "",
       preco: produto.preco,
       categoriaId: String(produto.categoria_id),
-      imagemUrl: produto.imagem_url || "" 
+      imagemUrl: produto.imagem_url || ""
     });
-    window.scrollTo({ top: 0, behavior: "smooth" }); 
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const cancelarEdicao = () => {
@@ -516,7 +553,7 @@ export default function ParceiroDashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, disponivel: !statusAtual }),
       });
-      
+
       if (res.ok) {
         setProdutos(produtos.map(p => p.id === id ? { ...p, disponivel: !statusAtual } : p));
       } else {
@@ -550,15 +587,15 @@ export default function ParceiroDashboard() {
   const alterarStatusPedido = async (pedidoId, novoStatus, motivoCancelamento = null) => {
     // Salva estado original para rollback em caso de erro
     const pedidosOriginais = [...pedidos];
-    
+
     // Atualização Otimista (UX rápida)
-    setPedidos(prev => prev.map(p => 
+    setPedidos(prev => prev.map(p =>
       p.id === pedidoId ? { ...p, status: novoStatus, motivo_cancelamento: motivoCancelamento } : p
     ));
 
     try {
       // Automação: Sugestão de aviso ao cliente via WhatsApp se for despacho
-           if (novoStatus === 'saiu_entrega') {
+      if (novoStatus === 'saiu_entrega') {
         const p = pedidos.find(item => item.id === pedidoId);
         avisarEntregaWhatsApp(p);
       }
@@ -586,51 +623,51 @@ export default function ParceiroDashboard() {
   const copiarPedidoAoClipboard = (pedido) => {
     // Se o número sequencial do parceiro não existir (pedidos antigos), usa o ID padrão
     const numeroPedido = pedido.numero_pedido_parceiro || pedido.id;
-    
+
     let msg = `*Novo Pedido #${numeroPedido} - ${loja.nome}*\n`;
     msg += `----------------------------------------\n`;
     msg += `*Cliente:* ${pedido.cliente_nome || "Não informado"}\n`;
     msg += `*Contato:* ${formatarTelefone(pedido.cliente_whatsapp) || "Não informado"}\n`;
     msg += `*Tipo:* ${pedido.tipo_entrega === "delivery" ? "Delivery" : "Retirada"}\n`;
-    
+
     if (pedido.tipo_entrega === "delivery") {
       msg += `*Endereço:* ${pedido.endereco_entrega || "Não informado"}\n`;
       if (pedido.ponto_referencia) {
         msg += `*Ref:* ${pedido.ponto_referencia}\n`;
       }
     }
-    
+
     const pagamento = pedido.forma_pagamento ? pedido.forma_pagamento.toUpperCase() : "NÃO INFORMADO";
     msg += `*Pagamento:* ${pagamento}\n`;
-    
+
     if (pedido.forma_pagamento === "dinheiro" && pedido.troco_para) {
       msg += `*Troco Para:* R$ ${parseFloat(pedido.troco_para).toFixed(2)}\n`;
     }
-    
+
     // No seu banco a coluna se chama 'observacoes'
     if (pedido.observacoes) {
       msg += `*Obs. Pedido:* ${pedido.observacoes}\n`;
     }
-    
+
     msg += `----------------------------------------\n\n`;
     msg += `*Itens:*\n`;
-    
+
     const itens = pedido.itens_pedido || [];
     itens.forEach(item => {
       // Pega o nome vindo do relacionamento que ajustamos no Passo 1
       const nomeProduto = item.produtos?.nome || "Item";
       const precoUnitario = parseFloat(item.preco_unitario || 0);
       const subtotalItem = precoUnitario * parseInt(item.quantidade || 1);
-      
+
       msg += `* ${item.quantidade}x _${nomeProduto}_ - R$ ${subtotalItem.toFixed(2)}`;
-      
+
       // Resgata a observação individual do lanche (ex: sem cebola)
       if (item.observacao && item.observacao.trim() !== "") {
         msg += ` (${item.observacao.trim()})`;
       }
       msg += `\n`;
     });
-    
+
     msg += `\n----------------------------------------\n`;
     if (pedido.tipo_entrega === "delivery") {
       msg += `*Subtotal:* R$ ${parseFloat(pedido.subtotal || 0).toFixed(2)}\n`;
@@ -711,7 +748,7 @@ export default function ParceiroDashboard() {
 
   const handleImprimirPedido = (pedido) => {
     setPedidoParaImpressao({ ...pedido }); // Cria uma cópia do pedido para garantir que o estado seja atualizado e o useEffect dispare
-    
+
     setAcoesRealizadas(prev => ({ // Marca como impresso para feedback visual
       ...prev, [pedido.id]: { ...prev[pedido.id], impresso: true }
     }));
@@ -762,7 +799,8 @@ export default function ParceiroDashboard() {
   return (
     <div className="min-h-screen bg-[#070a13] text-[#f9fafb] font-sans antialiased overflow-x-hidden selection:bg-amber-500/30 w-full relative max-w-full">
       {/* CSS Nativo para Impressão Térmica */}
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         @media print {
           body * { visibility: hidden; }
           #area-impressao-recibo, #area-impressao-recibo * { visibility: visible; }
@@ -820,31 +858,29 @@ export default function ParceiroDashboard() {
             <div className="flex items-center gap-2 mt-1">
               {/* LED pulsante no header refletindo o status real (Horário + Comando Manual) */}
               <div className="relative flex items-center justify-center w-4 h-4">
-                <span className={`absolute inline-flex h-full w-full rounded-full opacity-30 animate-ping ${
-                  (isAbertaAgora && (loja?.status_cardapio || 1) === 1) || (!isAbertaAgora && loja?.status_cardapio === 3) ? 'bg-emerald-400' : 'bg-rose-400'
-                }`}></span>
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                  (isAbertaAgora && (loja?.status_cardapio || 1) === 1) || (!isAbertaAgora && loja?.status_cardapio === 3) ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-rose-500 shadow-[0_0_10px_#f43f5e]'
-                }`}></span>
+                <span className={`absolute inline-flex h-full w-full rounded-full opacity-30 animate-ping ${(isAbertaAgora && (loja?.status_cardapio || 1) === 1) || (!isAbertaAgora && loja?.status_cardapio === 3) ? 'bg-emerald-400' : 'bg-rose-400'
+                  }`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${(isAbertaAgora && (loja?.status_cardapio || 1) === 1) || (!isAbertaAgora && loja?.status_cardapio === 3) ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-rose-500 shadow-[0_0_10px_#f43f5e]'
+                  }`}></span>
               </div>
               <h1 className="text-xl font-black text-white uppercase tracking-tight">{loja?.nome} 🏪</h1>
             </div>
             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Responsável: <span className="text-gray-300">{user?.nome}</span></p>
           </div>
           <div className="flex gap-2">
-            <button 
+            <button
               onClick={() => setViewPrincipal("pedidos")}
               className={`h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border touch-manipulation ${viewPrincipal === 'pedidos' ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/20' : 'bg-gray-950 border-gray-800 text-gray-500'}`}
             >
               Pedidos {pedidosPendentes.length > 0 && <span className="ml-1 bg-white text-amber-700 px-1.5 rounded-full text-[10px]">{pedidosPendentes.length}</span>}
             </button>
-            <button 
+            <button
               onClick={() => setViewPrincipal("cardapio")}
               className={`h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border touch-manipulation ${viewPrincipal === 'cardapio' ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/20' : 'bg-gray-950 border-gray-800 text-gray-500'}`}
             >
               Cardápio
             </button>
-            <button 
+            <button
               onClick={() => setViewPrincipal("configuracoes")}
               className={`h-11 px-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border touch-manipulation ${viewPrincipal === 'configuracoes' ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/20' : 'bg-gray-950 border-gray-800 text-gray-500'}`}
             >
@@ -860,21 +896,21 @@ export default function ParceiroDashboard() {
       <main className="p-4 md:p-6 max-w-7xl mx-auto relative z-10 space-y-6">
         {viewPrincipal === "pedidos" && (
           <div className="space-y-6">
-             {/* Filtros e Busca */}
+            {/* Filtros e Busca */}
             <div className="flex flex-col sm:flex-row gap-3 max-w-2xl mx-auto">
               <div className="relative flex-1 group">
-                <input 
-                  type="text" 
-                  placeholder="Buscar por cliente ou pedido..." 
+                <input
+                  type="text"
+                  placeholder="Buscar por cliente ou pedido..."
                   value={filtroPedidos}
                   onChange={(e) => setFiltroPedidos(e.target.value)}
                   className="w-full h-12 bg-gray-950/40 border border-gray-900 rounded-2xl px-10 text-[11px] text-white focus:border-amber-500 transition-all outline-none"
                 />
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-amber-500 transition-colors text-xs">🔍</span>
               </div>
-              
+
               {abaPedidos === 'historico' && (
-                <button 
+                <button
                   onClick={() => {
                     const hoje = new Date();
                     setViewMes(hoje.getMonth());
@@ -994,57 +1030,56 @@ export default function ParceiroDashboard() {
 
                     {/* ÁREA DE AÇÕES TÁTEIS: Focada em Android Touch */}
                     <div className="mt-4 pt-6 border-t border-gray-900/60 flex flex-col gap-3">
-                      
+
                       {/* Botão de Avisar Cliente (Permanece disponível enquanto em rota) */}
                       {p.status === 'saiu_entrega' && (
-                        <button 
+                        <button
                           onClick={() => avisarEntregaWhatsApp(p)}
                           className={`w-full h-14 border rounded-2xl transition-all flex items-center justify-center text-[10px] uppercase tracking-widest active:scale-95 touch-manipulation mb-1 ${acoesRealizadas[p.id]?.avisado ? 'bg-gray-900/40 border-gray-900 text-gray-600' : 'bg-amber-600 border-amber-500 text-white animate-pulse font-black shadow-lg shadow-amber-950/20'}`}
                         >
                           {acoesRealizadas[p.id]?.avisado ? "✅ Aviso de Entrega Enviado" : "📢 Enviar Aviso de Entrega"}
                         </button>
                       )}
-                      
+
                       {/* Botão de Próximo Status (Psicologia das Cores: Azul -> Roxo -> Verde) */}
                       {p.status !== 'finalizado' && p.status !== 'cancelado' && (
-                        <button 
+                        <button
                           onClick={() => {
                             const statusFlow = ['pendente', 'confirmado', 'saiu_entrega', 'finalizado'];
                             const idx = statusFlow.indexOf(p.status);
                             const proximo = statusFlow[idx + 1];
                             if (proximo) alterarStatusPedido(p.id, proximo);
                           }}
-                          className={`w-full min-h-[56px] text-white font-black rounded-2xl transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-lg active:scale-[0.98] touch-manipulation ${
-                            p.status === 'pendente' 
-                              ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-blue-950/20 animate-pulse" 
+                          className={`w-full min-h-[56px] text-white font-black rounded-2xl transition-all flex items-center justify-center text-xs uppercase tracking-widest shadow-lg active:scale-[0.98] touch-manipulation ${p.status === 'pendente'
+                              ? "bg-gradient-to-r from-blue-600 to-indigo-600 shadow-blue-950/20 animate-pulse"
                               : p.status === 'confirmado'
                                 ? "bg-gradient-to-r from-purple-600 to-fuchsia-600 shadow-purple-950/20 animate-pulse"
                                 : "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-950/20 animate-pulse"
-                          } ${['pendente', 'confirmado'].includes(p.status) && !acoesRealizadas[p.id]?.impresso ? 'animate-pulse' : ''}`}
+                            } ${['pendente', 'confirmado'].includes(p.status) && !acoesRealizadas[p.id]?.impresso ? 'animate-pulse' : ''}`}
                         >
                           {p.status === 'pendente' && "👨‍🍳 Confirmar Pedido"}
                           {p.status === 'confirmado' && "🛵 Despachar para Entrega"}
                           {p.status === 'saiu_entrega' && "✅ Finalizar Pedido"}
                         </button>
                       )}
-                      
+
                       {/* Botões Secundários */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <button 
+                        <button
                           onClick={() => { handleImprimirPedido(p); marcarAcao(p.id, "impresso"); }}
                           className={`min-h-[48px] border text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation transition-all ${acoesRealizadas[p.id]?.impresso ? 'bg-gray-950 border-gray-900 text-gray-600' : 'bg-gray-900 border-amber-500/50 text-amber-500 animate-pulse shadow-lg shadow-amber-900/10'}`}
                         >
                           Imprimir
                         </button>
 
-                        <button 
+                        <button
                           onClick={() => copiarPedidoAoClipboard(p)}
                           className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-500 hover:text-white text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation transition-colors"
                         >
                           Copiar
                         </button>
 
-                        <button 
+                        <button
                           onClick={() => setPedidoCorrigindo(p)}
                           className="min-h-[48px] bg-gray-950 border border-gray-800 text-gray-500 hover:text-amber-500/60 text-[10px] font-black rounded-xl uppercase flex items-center justify-center gap-2 active:scale-95 touch-manipulation transition-colors"
                         >
@@ -1052,7 +1087,7 @@ export default function ParceiroDashboard() {
                         </button>
 
                         {['pendente', 'confirmado', 'saiu_entrega'].includes(p.status) && (
-                          <button 
+                          <button
                             onClick={() => {
                               const motivo = prompt("Motivo do cancelamento (ex: Falta de insumos):");
                               if (motivo) alterarStatusPedido(p.id, "cancelado", motivo);
@@ -1064,7 +1099,7 @@ export default function ParceiroDashboard() {
                         )}
                       </div>
                     </div>
-                    
+
                     {p.status === 'cancelado' && p.motivo_cancelamento && (
                       <div className="mt-3 p-2 bg-rose-950/30 rounded border border-rose-900/40">
                         <p className="text-[10px] text-rose-300 italic">Motivo: {p.motivo_cancelamento}</p>
@@ -1080,10 +1115,10 @@ export default function ParceiroDashboard() {
         {viewPrincipal === "configuracoes" && (
           <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
             {/* Componente de Status Refatorado */}
-            <CardapioStatusDisplay 
-              statusNum={loja?.status_cardapio || 1} 
-              isAbertaAgora={isAbertaAgora} 
-              onToggleStatus={handleUpdateStatusNum} 
+            <CardapioStatusDisplay
+              statusNum={loja?.status_cardapio || 1}
+              isAbertaAgora={isAbertaAgora}
+              onToggleStatus={handleUpdateStatusNum}
             />
 
             {/* Seção de Identidade da Loja */}
@@ -1095,51 +1130,102 @@ export default function ParceiroDashboard() {
                     Salvar Dados da Loja
                   </button>
                 </div>
-                
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">Link do Avatar (Logo)</label>
-                    <input 
-                      type="url" 
-                      value={lojaForm.logo_url || ""} 
-                      onChange={(e) => setLojaForm({...lojaForm, logo_url: e.target.value})} 
-                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all" 
-                      placeholder="https://..." 
+                    <input
+                      type="url"
+                      value={lojaForm.logo_url || ""}
+                      onChange={(e) => setLojaForm({ ...lojaForm, logo_url: e.target.value })}
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all"
+                      placeholder="https://..."
                     />
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">Link do Banner</label>
-                    <input 
-                      type="url" 
-                      value={lojaForm.banner_url || ""} 
-                      onChange={(e) => setLojaForm({...lojaForm, banner_url: e.target.value})} 
-                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all" 
-                      placeholder="https://..." 
+                    <input
+                      type="url"
+                      value={lojaForm.banner_url || ""}
+                      onChange={(e) => setLojaForm({ ...lojaForm, banner_url: e.target.value })}
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all"
+                      placeholder="https://..."
                     />
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">WhatsApp Oficial</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       name="telefone_whatsapp"
-                      value={lojaForm.telefone_whatsapp || ""} 
+                      value={lojaForm.telefone_whatsapp || ""}
                       onChange={handleLojaInputChange}
-                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all" 
-                      placeholder="91988887777" 
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500 transition-all"
+                      placeholder="91988887777"
                     />
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5 ml-1 tracking-wider">Endereço Local</label>
-                    <input 
-                      type="text" 
-                      value={lojaForm.endereco || ""} 
-                      onChange={(e) => setLojaForm({...lojaForm, endereco: e.target.value})} 
-                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white outline-none focus:border-amber-500 transition-all" 
-                      placeholder="Rua Exemplo, 123" 
+                    <input
+                      type="text"
+                      value={lojaForm.endereco || ""}
+                      onChange={(e) => setLojaForm({ ...lojaForm, endereco: e.target.value })}
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white outline-none focus:border-amber-500 transition-all"
+                      placeholder="Rua Exemplo, 123"
                     />
                   </div>
                 </div>
               </form>
+
+              {/* SEÇÃO DE ÁREAS DE ENTREGA (NOVO) */}
+              <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-8 rounded-[2.5rem] mt-6 shadow-2xl space-y-6">
+                <div>
+                  <h2 className="text-sm font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">🛵 Regiões de Cobertura & Taxas</h2>
+                  <p className="text-[10px] text-gray-500 mt-1 font-bold uppercase tracking-tight italic">Cadastre as regiões que você atende e o valor da entrega.</p>
+                </div>
+
+                <form onSubmit={handleAdicionarTaxa} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <input
+                    type="text"
+                    placeholder="Nome da Região"
+                    value={novaTaxa.regiao}
+                    onChange={e => setNovaTaxa({ ...novaTaxa, regiao: e.target.value })}
+                    className="h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white outline-none focus:border-amber-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Taxa (ex: 5.00)"
+                    value={novaTaxa.valor}
+                    onChange={e => setNovaTaxa({ ...novaTaxa, valor: e.target.value })}
+                    className="h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-amber-500 font-mono outline-none focus:border-amber-500"
+                  />
+                  <button
+                    disabled={loadingTaxas}
+                    className="h-12 bg-amber-600 hover:bg-amber-500 text-white font-black text-[10px] uppercase rounded-2xl transition-all shadow-lg active:scale-95"
+                  >
+                    {loadingTaxas ? "..." : "Cadastrar Região"}
+                  </button>
+                </form>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {taxasEntrega.map(taxa => (
+                    <div key={taxa.id} className="bg-gray-950/40 p-4 rounded-2xl border border-gray-900 flex justify-between items-center group">
+                      <div>
+                        <p className="text-[10px] font-black text-white uppercase tracking-wider">{taxa.regiao}</p>
+                        <p className="text-xs font-black text-amber-500 font-mono">R$ {parseFloat(taxa.valor_taxa).toFixed(2)}</p>
+                      </div>
+                      <button
+                        onClick={() => handleExcluirTaxa(taxa.id)}
+                        className="h-8 w-8 flex items-center justify-center bg-rose-950/20 text-rose-500 rounded-xl opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-600 hover:text-white"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                  {taxasEntrega.length === 0 && (
+                    <p className="col-span-full text-center py-4 text-[10px] text-gray-600 font-bold uppercase tracking-widest">Nenhuma região cadastrada.</p>
+                  )}
+                </div>
+              </div>
 
               {/* SEÇÃO DE HORÁRIOS DE FUNCIONAMENTO - FOCO MOBILE */}
               <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-8 rounded-[2.5rem] mt-6 shadow-2xl space-y-6">
@@ -1149,7 +1235,7 @@ export default function ParceiroDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {lojaForm.horarios_funcionamento && 
+                  {lojaForm.horarios_funcionamento &&
                     ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'].map((dia) => {
                       const dados = lojaForm.horarios_funcionamento[dia];
                       const diaExtenso = {
@@ -1158,12 +1244,12 @@ export default function ParceiroDashboard() {
                       }[dia];
 
                       if (!dados) return null;
-                      
+
                       return (
                         <div key={dia} className={`p-6 rounded-[2rem] border transition-all duration-300 ${dados.ativo ? 'bg-[#0f1420] border-gray-800 shadow-xl' : 'bg-gray-950/30 border-gray-900/50 opacity-40'}`}>
                           <div className="flex items-center justify-between mb-3">
                             <span className="text-sm font-bold uppercase tracking-widest text-gray-300">{diaExtenso}</span>
-                            <button 
+                            <button
                               type="button"
                               onClick={() => updateHorario(dia, 'ativo', !dados.ativo)}
                               className={`h-7 px-3 rounded-full text-[8px] font-black uppercase tracking-widest transition-all border ${dados.ativo ? 'bg-amber-500 border-amber-500 text-black' : 'bg-gray-900 border-gray-800 text-gray-500'}`}
@@ -1177,9 +1263,9 @@ export default function ParceiroDashboard() {
                               <div className="flex items-center justify-center gap-2">
                                 <div className="flex-1 space-y-1">
                                   <label className="text-[9px] font-black text-gray-500 uppercase block text-center tracking-tighter">Abre às</label>
-                                  <input 
-                                    type="time" 
-                                    value={dados.inicio} 
+                                  <input
+                                    type="time"
+                                    value={dados.inicio}
                                     onChange={(e) => updateHorario(dia, 'inicio', e.target.value)}
                                     className="w-full bg-gray-950 border border-gray-800 rounded-xl h-11 px-2 text-sm font-medium text-amber-500 focus:border-amber-500 outline-none text-center"
                                   />
@@ -1187,16 +1273,16 @@ export default function ParceiroDashboard() {
                                 <span className="text-gray-700 text-xs mt-4">/</span>
                                 <div className="flex-1 space-y-1">
                                   <label className="text-[9px] font-black text-gray-500 uppercase block text-center tracking-tighter">Fecha às</label>
-                                  <input 
-                                    type="time" 
-                                    value={dados.fim} 
+                                  <input
+                                    type="time"
+                                    value={dados.fim}
                                     onChange={(e) => updateHorario(dia, 'fim', e.target.value)}
                                     className="w-full bg-gray-950 border border-gray-800 rounded-xl h-11 px-2 text-sm font-medium text-amber-500 focus:border-amber-500 outline-none text-center"
                                   />
                                 </div>
                               </div>
-                              <button 
-                                type="button" 
+                              <button
+                                type="button"
                                 onClick={() => replicarHorarios(dia)}
                                 className="w-full h-9 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.05] rounded-xl flex items-center justify-center gap-1 text-[8px] font-black text-gray-400 hover:text-amber-500 uppercase tracking-widest transition-all active:scale-95"
                               >
@@ -1214,7 +1300,7 @@ export default function ParceiroDashboard() {
                 </div>
 
                 <div className="flex justify-end pt-2">
-                  <button 
+                  <button
                     type="button"
                     onClick={handleSalvarLoja}
                     className="h-12 px-8 bg-gray-900 border border-amber-500/30 text-amber-500 hover:bg-amber-500 hover:text-black font-black text-[10px] uppercase rounded-2xl transition-all active:scale-95 shadow-lg shadow-amber-950/10"
@@ -1229,7 +1315,7 @@ export default function ParceiroDashboard() {
 
         {viewPrincipal === "cardapio" && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
-             {/* Coluna Lateral: Categorias e Produtos */}
+            {/* Coluna Lateral: Categorias e Produtos */}
             <div className="space-y-6 h-fit lg:sticky lg:top-24">
               {/* GESTÃO DE CATEGORIAS */}
               <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-6 rounded-3xl shadow-xl">
@@ -1261,68 +1347,68 @@ export default function ParceiroDashboard() {
 
               {/* Formulário de Produto */}
               <div className="bg-[#121826]/60 backdrop-blur-md border border-gray-900/60 p-6 rounded-3xl shadow-xl">
-              <h2 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest">
-                {editandoId ? "📝 Editando Item do Cardápio" : "✨ Novo Item no Cardápio"}
-              </h2>
-              
-              {erroForm && <div className="mb-3 p-2 bg-rose-950 text-rose-300 text-xs rounded border border-rose-800">⚠️ {erroForm}</div>}
+                <h2 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest">
+                  {editandoId ? "📝 Editando Item do Cardápio" : "✨ Novo Item no Cardápio"}
+                </h2>
 
-              <form onSubmit={handleSalvarProduto} className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Nome do Lanche/Bebida</label>
-                  <input type="text" required value={form.nome} onChange={(e) => setForm({...form, nome: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all placeholder:text-gray-700" placeholder="Ex: Burger Bacon" />
-                </div>
+                {erroForm && <div className="mb-3 p-2 bg-rose-950 text-rose-300 text-xs rounded border border-rose-800">⚠️ {erroForm}</div>}
 
-                <div className="grid grid-cols-2 gap-4">
+                <form onSubmit={handleSalvarProduto} className="space-y-4">
                   <div>
-                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Preço (R$)</label>
-                    <input type="number" step="0.01" required value={form.preco} onChange={(e) => setForm({...form, preco: e.target.value})} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm font-mono text-amber-500 focus:border-amber-500 outline-none" placeholder="0.00" />
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Nome do Lanche/Bebida</label>
+                    <input type="text" required value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-white focus:outline-none focus:border-amber-500 transition-all placeholder:text-gray-700" placeholder="Ex: Burger Bacon" />
                   </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Preço (R$)</label>
+                      <input type="number" step="0.01" required value={form.preco} onChange={(e) => setForm({ ...form, preco: e.target.value })} className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm font-mono text-amber-500 focus:border-amber-500 outline-none" placeholder="0.00" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Categoria</label>
+                      <select
+                        value={form.categoriaId}
+                        onChange={(e) => setForm({ ...form, categoriaId: e.target.value })}
+                        className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-gray-400 outline-none focus:border-amber-500" >
+                        <option value="">Selecionar</option>
+                        {categorias.map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.nome}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Categoria</label>
-                    <select 
-                      value={form.categoriaId} 
-                      onChange={(e) => setForm({...form, categoriaId: e.target.value})} 
-                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-sm text-gray-400 outline-none focus:border-amber-500" >
-                      <option value="">Selecionar</option>
-                      {categorias.map((cat) => (
-                        <option key={cat.id} value={cat.id}>
-                          {cat.nome}
-                        </option>
-                      ))}
-                    </select>
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Link da Foto</label>
+                    <input
+                      type="url"
+                      value={form.imagemUrl || ""}
+                      onChange={(e) => setForm({ ...form, imagemUrl: e.target.value })}
+                      className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500"
+                      placeholder="https://exemplo.com/suafoto.jpg"
+                    />
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Link da Foto</label>
-                  <input 
-                    type="url" 
-                    value={form.imagemUrl || ""} 
-                    onChange={(e) => setForm({...form, imagemUrl: e.target.value})} 
-                    className="w-full h-12 bg-gray-950 border border-gray-800 rounded-2xl px-4 text-xs text-white font-mono outline-none focus:border-amber-500" 
-                    placeholder="https://exemplo.com/suafoto.jpg" 
-                  />
-                </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Descrição</label>
+                    <textarea rows="3" value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })} className="w-full bg-gray-950 border border-gray-800 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-amber-500 resize-none" placeholder="O que vem no prato?" />
+                  </div>
 
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-1.5 ml-1">Descrição</label>
-                  <textarea rows="3" value={form.descricao} onChange={(e) => setForm({...form, descricao: e.target.value})} className="w-full bg-gray-950 border border-gray-800 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-amber-500 resize-none" placeholder="O que vem no prato?" />
-                </div>
-
-                <div className="space-y-2">
-                  <button type="submit" disabled={cadastrando} className={`w-full h-14 font-black rounded-2xl text-xs tracking-widest uppercase transition-all shadow-lg active:scale-95 touch-manipulation disabled:opacity-50 ${editandoId ? 'bg-amber-600 hover:bg-amber-500' : 'bg-gradient-to-r from-amber-600 to-orange-600'}`}>
-                    {cadastrando ? "Salvando..." : editandoId ? "Salvar Alterações 💾" : "Injetar no Cardápio 🚀"}
-                  </button>
-                  
-                  {editandoId && (
-                    <button type="button" onClick={cancelarEdicao} className="w-full h-12 bg-transparent hover:bg-white/5 font-bold rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest transition-all">
-                      Cancelar Edição
+                  <div className="space-y-2">
+                    <button type="submit" disabled={cadastrando} className={`w-full h-14 font-black rounded-2xl text-xs tracking-widest uppercase transition-all shadow-lg active:scale-95 touch-manipulation disabled:opacity-50 ${editandoId ? 'bg-amber-600 hover:bg-amber-500' : 'bg-gradient-to-r from-amber-600 to-orange-600'}`}>
+                      {cadastrando ? "Salvando..." : editandoId ? "Salvar Alterações 💾" : "Injetar no Cardápio 🚀"}
                     </button>
-                  )}
-                </div>
-              </form>
-            </div>
+
+                    {editandoId && (
+                      <button type="button" onClick={cancelarEdicao} className="w-full h-12 bg-transparent hover:bg-white/5 font-bold rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest transition-all">
+                        Cancelar Edição
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </div>
             </div>
 
             {/* Listagem de Itens Cadastrados */}
@@ -1345,7 +1431,7 @@ export default function ParceiroDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {produtos.map((p) => (
                     <div key={p.id} className={`bg-[#121826]/60 backdrop-blur-md border rounded-[2rem] p-6 flex flex-col justify-between transition-all ${p.disponivel ? 'border-gray-900/60' : 'border-rose-950/40 bg-rose-950/5'}`}>
-                      
+
                       <div>
                         <div className="flex justify-between items-start gap-2 mb-2">
                           <div className="flex-1">
@@ -1362,25 +1448,24 @@ export default function ParceiroDashboard() {
                         </div>
                         <p className="text-xs text-gray-500 font-medium line-clamp-2 mb-4 leading-relaxed">{p.descricao || "Sem descrição informada."}</p>
                       </div>
-                      
+
                       <div className="flex justify-between items-center border-t border-gray-900/40 pt-4 mt-2 gap-2">
                         <span className="text-base font-black text-amber-600 font-mono">
                           R$ {parseFloat(p.preco).toFixed(2)}
                         </span>
-                        
+
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => handleAlternarDisponibilidade(p.id, p.disponivel)}
-                            className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded transition-colors select-none ${
-                              p.disponivel 
-                                ? "bg-amber-950/20 text-amber-500 hover:bg-amber-950 hover:text-amber-400 border border-amber-900/30" 
+                            className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded transition-colors select-none ${p.disponivel
+                                ? "bg-amber-950/20 text-amber-500 hover:bg-amber-950 hover:text-amber-400 border border-amber-900/30"
                                 : "bg-gray-950 text-gray-600 border border-gray-900"
-                            }`}
+                              }`}
                           >
                             {p.disponivel ? "🟢 Ativo" : "🟠 Pausado"}
                           </button>
 
-                          <button 
+                          <button
                             onClick={() => iniciarEdicao(p)}
                             className="bg-gray-800 hover:bg-gray-700 text-gray-300 p-2 px-3 rounded border border-[#374151] text-xs transition-colors select-none"
                             title="Editar Detalhes"
@@ -1388,7 +1473,7 @@ export default function ParceiroDashboard() {
                             📝
                           </button>
 
-                          <button 
+                          <button
                             onClick={() => handleDeletarProduto(p.id)}
                             className="bg-gray-800 hover:bg-rose-950 hover:text-rose-400 text-gray-400 p-2 px-3 rounded border border-[#374151] text-xs transition-colors select-none"
                             title="Excluir Item"
@@ -1457,10 +1542,10 @@ export default function ParceiroDashboard() {
             </div>
 
             <div className="grid grid-cols-7 gap-1 text-center">
-              {['D','S','T','Q','Q','S','S'].map((s, i) => <span key={`header-upper-${i}`} className="text-[8px] font-black text-gray-600">{s}</span>)}
+              {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((s, i) => <span key={`header-upper-${i}`} className="text-[8px] font-black text-gray-600">{s}</span>)}
               {diasCalendario.map((dia, idx) => {
                 if (!dia) return <div key={idx} />;
-                
+
                 const dataISO = `${viewAno}-${String(viewMes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
                 const temPedido = datasComPedidos.has(dataISO);
                 const isSelecionado = dataFiltroHistorico === dataISO;
@@ -1483,16 +1568,16 @@ export default function ParceiroDashboard() {
             </div>
 
             <div className="flex justify-center gap-4 pt-2 border-t border-gray-900/50">
-               <div className="flex items-center gap-1.5">
-                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                 <span className="text-[8px] font-black text-gray-500 uppercase">Com Pedidos</span>
-               </div>
-               <div className="flex items-center gap-1.5">
-                 <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                 <span className="text-[8px] font-black text-gray-500 uppercase">Sem Pedidos</span>
-               </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[8px] font-black text-gray-500 uppercase">Com Pedidos</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                <span className="text-[8px] font-black text-gray-500 uppercase">Sem Pedidos</span>
+              </div>
             </div>
-            
+
             <button onClick={() => setIsCalendarioAberto(false)} className="w-full h-12 text-[10px] font-black text-gray-500 uppercase tracking-widest pt-2">Cancelar</button>
           </div>
         </div>
