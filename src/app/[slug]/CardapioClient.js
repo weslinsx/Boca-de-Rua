@@ -1,63 +1,31 @@
 // src/app/[slug]/CardapioClient.js
 'use client';
 
-import { useCart } from "@/context/CartContext"; // Importa o hook de carrinho
-import { useState, useEffect, useMemo } from "react"; // Importa hooks do React
+import { useCart } from "@/context/CartContext";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { gerarLinkWhatsApp, formatarTelefone } from "@/app/utils/whatsapp";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function CardapioClient({ loja, produtos, categorias }) {
+  // Contexto do Carrinho
   const { addToCart, removeFromCart, clearCart, cart, totalItens, precoTotal } = useCart();
+
+  // Estados de UI
   const [isSacolaAberta, setIsSacolaAberta] = useState(false);
   const [produtoSelecionado, setProdutoSelecionado] = useState(null);
   const [loading, setLoading] = useState(false);
   const [erroCheckout, setErroCheckout] = useState("");
-  const [ultimoPedido, setUltimoPedido] = useState(null); // Para a funcionalidade "Peça Novamente"
+  const [ultimoPedido, setUltimoPedido] = useState(null);
   const [regioesDisponiveis, setRegioesDisponiveis] = useState([]);
   const [taxaSelecionada, setTaxaSelecionada] = useState(0);
-  const [isMounted, setIsMounted] = useState(false); // Hydration fix
-
-  const [activeCategory, setActiveCategory] = useState('todos'); // Estado para a categoria ativa
-  const [isHorariosAberto, setIsHorariosAberto] = useState(false); // Modal de horários
-  const [theme, setTheme] = useState('dark'); // 'dark' ou 'light'
-  
-  // Lógica de verificação de loja aberta (Sincronizada com o Painel)
-  const isLojaAberta = (() => {
-    // 1. Bloqueio master se o estabelecimento estiver suspenso pelo Admin
-    if (loja.status === 'suspenso') return false;
-
-    const statusNum = loja.status_cardapio || 1;
-
-    // 2. Atalhos Manuais (Forçados)
-    if (statusNum === 3) return true;  // Forçado Aberto (Em Teste)
-    if (statusNum === 4) return false; // Forçado Fechado (Pausado)
-
-    // 3. Lógica de Horário Automática (Status 1 e 2)
-    if (!loja.horarios_funcionamento) return true;
-
-    const agora = new Date();
-    const dias = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-    const diaHoje = dias[agora.getDay()];
-    const config = loja.horarios_funcionamento[diaHoje];
-
-    if (!config || !config.ativo) return false;
-
-    const horaAtual = agora.getHours() * 60 + agora.getMinutes();
-    const [hIni, mIni] = config.inicio.split(':').map(Number);
-    const [hFim, mFim] = config.fim.split(':').map(Number);
-    
-    const inicio = hIni * 60 + mIni;
-    let fim = hFim * 60 + mFim;
-
-    if (fim <= inicio) fim += 1440; 
-
-    return horaAtual >= inicio && horaAtual <= fim;
-  })();
-
-  // Estado para controlar as observações de cada item pelo ID do produto
+  const [isMounted, setIsMounted] = useState(false);
+  const [activeCategory, setActiveCategory] = useState('todos');
+  const [isHorariosAberto, setIsHorariosAberto] = useState(false);
+  const [theme, setTheme] = useState('dark');
   const [observacoes, setObservacoes] = useState({});
 
+  // Dados do Formulário
   const [formData, setFormData] = useState({
     nome: "",
     whatsapp: "",
@@ -66,151 +34,193 @@ export default function CardapioClient({ loja, produtos, categorias }) {
     pontoReferencia: "",
     observacoesGerais: "",
     formaPagamento: "pix",
-    trocoPara: "", // Adicionado campo de bairro
+    trocoPara: "",
     regiao: ""
   });
 
-  // 1. Hydration Fix, Initial Data Load (Client Data, Last Order, Regions, Theme)
+  // Função utilitária para Dia Comercial (Madrugada até 05h)
+  const getDiaComercial = useCallback(() => {
+    const agora = new Date();
+    if (agora.getHours() < 5) agora.setDate(agora.getDate() - 1);
+    return agora.toISOString().split('T')[0];
+  }, []);
+
+  /**
+   * Lógica de verificação de loja aberta (Sincronizada com o Painel)
+   */
+  const { isLojaAberta, minutosParaFechar } = useMemo(() => {
+    if (loja?.status === 'suspenso') return false;
+
+    const statusNum = loja?.status_cardapio ?? 1;
+    if (statusNum === 3) return { isLojaAberta: true, minutosParaFechar: 999 };
+    if (statusNum === 4) return { isLojaAberta: false, minutosParaFechar: 0 };
+    if (!loja?.horarios_funcionamento) return { isLojaAberta: true, minutosParaFechar: 999 };
+
+    const agora = new Date();
+    const dias = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+    const diaHoje = dias[agora.getDay()];
+    const config = loja.horarios_funcionamento[diaHoje];
+
+    if (!config?.ativo) return { isLojaAberta: false, minutosParaFechar: 0 };
+
+    const horaAtual = agora.getHours() * 60 + agora.getMinutes();
+    const [hIni, mIni] = config.inicio.split(':').map(Number);
+    const [hFim, mFim] = config.fim.split(':').map(Number);
+    
+    const inicio = hIni * 60 + mIni;
+    let fim = hFim * 60 + mFim;
+    if (fim <= inicio) fim += 1440; 
+
+    const aberta = horaAtual >= inicio && horaAtual <= fim;
+    const minutosRestantes = fim - horaAtual;
+
+    return { 
+      isLojaAberta: aberta && minutosRestantes > 0, 
+      minutosParaFechar: minutosRestantes 
+    };
+  }, [loja]);
+
+  // Regra Estrita: Bloquear pedidos nos últimos 5 minutos
+  const bloquearPorFechamento = minutosParaFechar > 0 && minutosParaFechar <= 5;
+
+  /**
+   * Ciclo de Vida 1: Inicialização, Hidratação e Carregamento de Dados Fixos
+   */
   useEffect(() => {
     setIsMounted(true);
-    const hoje = new Date().toISOString().split('T')[0];
-    const statusLoja = loja.status_cardapio || 1;
-    
-    // Buscar regiões/taxas
+
+    // 1. Carregar Tema
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) setTheme(savedTheme);
+    else if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) setTheme('dark');
+
+    // 2. Buscar Taxas
     const carregarTaxas = async () => {
-      const { data } = await supabase.from("taxas_entrega").select("*").eq("estabelecimento_id", loja.id);
+      const { data } = await supabase.from("taxas_entrega").select("*").eq("estabelecimento_id", loja?.id);
       if (data) setRegioesDisponiveis(data);
     };
     carregarTaxas();
 
-    // Lógica de Persistência da Sacola (Antierro e Expiração)
-    const sacolaSalva = localStorage.getItem(`bdr_sacola_${loja.slug}`);
-    if (sacolaSalva) {
-      try {
-        const { itens, salvoEm } = JSON.parse(sacolaSalva);
-        
-        // Regra: Se loja fechada/pausada OU mudou o dia, limpa a sacola
-        if ([2, 4].includes(statusLoja) || salvoEm !== hoje) {
-          localStorage.removeItem(`bdr_sacola_${loja.slug}`);
-          clearCart();
-        } else {
-          // Restaura itens (O CartContext deve suportar uma função de restore ou adicionamos um a um)
-          // Para este exemplo, assumimos que o CartContext gerencia o estado global, 
-          // mas a persistência de "Sessão Ativa" é feita aqui.
-        }
-      } catch (e) { console.error("Erro sacola:", e); }
+    // 3. Carregar Último Pedido
+    const lastOrder = localStorage.getItem(`bdr_ultimo_pedido_${loja?.slug}`);
+    if (lastOrder) {
+      try { setUltimoPedido(JSON.parse(lastOrder)); } catch (e) { console.error(e); }
     }
 
-    // Carregar Último Pedido para "Peça Novamente"
-    const lastOrder = localStorage.getItem(`bdr_ultimo_pedido_${loja.slug}`);
-    if (lastOrder) setUltimoPedido(JSON.parse(lastOrder));
-
-    // Dados de Identidade do Cliente
+    // 4. Carregar Identidade do Cliente
     const dadosSalvos = localStorage.getItem("bocaDeRua_clienteDados");
     if (dadosSalvos) {
       try {
         const dadosParsed = JSON.parse(dadosSalvos);
-        setFormData(prev => ({ ...prev, ...dadosParsed, regiao: dadosParsed.regiao || "" })); // Garante que regiao seja inicializado
+        setFormData(prev => ({ ...prev, ...dadosParsed, regiao: dadosParsed.regiao || "" }));
       } catch (e) { console.error(e); }
     }
-  }, [loja.id]);
+  }, [loja?.id, loja?.slug]);
 
-  // Sincronizar Sacola com LocalStorage sempre que mudar
+  /**
+   * Ciclo de Vida 2: Persistência e Expiração da Sacola
+   */
   useEffect(() => {
-    if (isMounted && cart.length > 0) {
+    if (!isMounted) return;
+
+    const hoje = getDiaComercial();
+    const statusLoja = loja?.status_cardapio ?? 1;
+
+    // Expiração da Sacola
+    if ([2, 4].includes(statusLoja)) {
+      localStorage.removeItem(`bdr_sacola_${loja?.slug}`);
+      clearCart();
+      return;
+    }
+
+    if (cart.length > 0) {
       const estado = {
         itens: cart,
-        salvoEm: new Date().toISOString().split('T')[0]
+        salvoEm: hoje
       };
-      localStorage.setItem(`bdr_sacola_${loja.slug}`, JSON.stringify(estado));
-    } else if (isMounted && cart.length === 0) {
-      localStorage.removeItem(`bdr_sacola_${loja.slug}`);
+      localStorage.setItem(`bdr_sacola_${loja?.slug}`, JSON.stringify(estado));
+    } else {
+      localStorage.removeItem(`bdr_sacola_${loja?.slug}`);
     }
-  }, [cart, isMounted, loja.slug]);
+  }, [cart, isMounted, loja?.slug, loja?.status_cardapio, clearCart, getDiaComercial]);
 
-  // Funções de Quantidade
-  const aumentarQuantidade = (produto) => addToCart(produto);
-  const diminuirQuantidade = (produtoId) => removeFromCart(produtoId);
+  /**
+   * Lógica de Taxas por Região
+   */
+  useEffect(() => {
+    const regiaoEncontrada = regioesDisponiveis.find(item => item.regiao === formData.regiao);
+    setTaxaSelecionada(regiaoEncontrada ? parseFloat(regiaoEncontrada.valor_taxa) : 0);
+  }, [formData.regiao, regioesDisponiveis]);
 
-  const handlePecaNovamente = () => {
+  // Callbacks Otimizados
+  const aumentarQuantidade = useCallback((p) => addToCart(p), [addToCart]);
+  const diminuirQuantidade = useCallback((id) => removeFromCart(id), [removeFromCart]);
+
+  const handlePecaNovamente = useCallback(() => {
     if (!ultimoPedido) return;
     ultimoPedido.forEach(item => {
-      // Adiciona cada item com a quantidade original
       for(let i=0; i < item.quantidade; i++) addToCart(item);
     });
     setIsSacolaAberta(true);
-  };
+  }, [ultimoPedido, addToCart]);
 
- // 2. Atualiza a taxa sempre que o bairro muda (ou quando os bairros carregam)
-  useEffect(() => {
-    if (formData.regiao && regioesDisponiveis.length > 0) {
-      const b = regioesDisponiveis.find(item => item.regiao === formData.regiao);
-      setTaxaSelecionada(b ? parseFloat(b.valor_taxa) : 0);
-    } else {
-      setTaxaSelecionada(0);
-    }
-  }, [formData.regiao, regioesDisponiveis, formData.tipoEntrega]);
-
-  // Efeito para carregar/salvar o tema do localStorage
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) { // Se houver um tema salvo, usa ele
-      setTheme(savedTheme);
-    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      setTheme('dark'); // Se não houver salvo, detecta a preferência do sistema (dark como padrão do projeto)
-    }
-  }, []);
-
-  const handleInputChange = (e) => {
+  const handleInputChange = useCallback((e) => {
     const { name, value } = e.target;
     const valorFinal = name === "whatsapp" ? formatarTelefone(value) : value;
 
     setFormData(prev => {
       const novosDados = { ...prev, [name]: valorFinal };
-        // Persistência automática no LocalStorage
-      if (typeof window !== 'undefined') {
-        localStorage.setItem("bocaDeRua_clienteDados", JSON.stringify(novosDados));
-      }
       return novosDados;
     });
-  };
+  }, []);
 
-  const handleFinalizarPedido = async (e) => {
+  // Persistência debounced dos dados do cliente
+  useEffect(() => {
+    if (isMounted) {
+      localStorage.setItem("bocaDeRua_clienteDados", JSON.stringify(formData));
+    }
+  }, [formData, isMounted]);
+
+  const handleFinalizarPedido = useCallback(async (e) => {
     e.preventDefault();
     setErroCheckout("");
+    
     const whatsappLimpo = formData.whatsapp.replace(/\D/g, "");
-
     if (!formData.nome || whatsappLimpo.length < 10 || (formData.tipoEntrega === 'delivery' && !formData.endereco)) {
       setErroCheckout("Preencha nome, WhatsApp com DDD e endereço (se delivery).");
       return;
     }
 
     setLoading(true);
-    const taxaEntrega = formData.tipoEntrega === "delivery" ? taxaSelecionada : 0;
-    const totalGeral = precoTotal + taxaEntrega;
-
-    const itensComObservacao = cart.map(item => ({
-      ...item,
-      observacao: observacoes[item.id] || null
-    }));
-
     try {
+      const taxaEntrega = formData.tipoEntrega === "delivery" ? taxaSelecionada : 0;
+      const totalGeral = precoTotal + taxaEntrega;
+
+      // Validação de Segurança: Troco insuficiente
+      if (formData.formaPagamento === "dinheiro" && formData.trocoPara && parseFloat(formData.trocoPara) < totalGeral) {
+        setErroCheckout(`O troco não pode ser menor que o total de R$ ${totalGeral.toFixed(2)}`);
+        setLoading(false);
+        return;
+      }
+
+      const itensComObservacao = cart.map(item => ({ ...item, observacao: observacoes[item.id] || null }));
+
       const response = await fetch("/api/pedidos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          estabelecimentoId: loja.id,
+          estabelecimentoId: loja?.id,
           clienteNome: formData.nome,
           clienteWhatsapp: whatsappLimpo,
           tipoEntrega: formData.tipoEntrega,
-          enderecoEntrega: formData.tipoEntrega === "delivery" ? formData.endereco : null,
-          pontoReferencia: formData.tipoEntrega === "delivery" ? formData.pontoReferencia : null,
-          regiaoEntrega: formData.tipoEntrega === "delivery" ? formData.regiao : null, // Novo campo
-          observacoesGerais: formData.observacoesGerais || null,
+          enderecoEntrega: formData.endereco || null,
+          pontoReferencia: formData.pontoReferencia || null,
+          regiaoEntrega: formData.regiao || null,
+          observacoesGerais: formData.observacoesGerais,
           formaPagamento: formData.formaPagamento,
           trocoPara: formData.formaPagamento === "dinheiro" ? formData.trocoPara : null,
           subtotal: precoTotal,
-          taxaEntrega: taxaEntrega,
+          taxaEntrega,
           total: totalGeral,
           itens: itensComObservacao
         })
@@ -218,84 +228,51 @@ export default function CardapioClient({ loja, produtos, categorias }) {
 
       if (!response.ok) throw new Error("Erro ao salvar pedido");
       
-      // Salva para o "Peça Novamente"
-      localStorage.setItem(`bdr_ultimo_pedido_${loja.slug}`, JSON.stringify(itensComObservacao));
-
+      localStorage.setItem(`bdr_ultimo_pedido_${loja?.slug}`, JSON.stringify(itensComObservacao));
       const pedidoGravado = await response.json();
-      
-      const pedidoId = pedidoGravado.numeroPedidoParceiro || 
-                       pedidoGravado.id || 
-                       pedidoGravado[0]?.id || 
-                       pedidoGravado.data?.id || 
-                       pedidoGravado.pedido?.id || 
-                       pedidoGravado.data?.[0]?.id ||
-                       Math.floor(1000 + Math.random() * 9000);
+      const pedidoId = pedidoGravado.numeroPedidoParceiro || pedidoGravado.id || Math.floor(1000 + Math.random() * 9000);
 
-      const linkZap = gerarLinkWhatsApp(
-        loja,
-        pedidoId,
-        formData,
-        cart,
-        observacoes,
-        precoTotal,
-        taxaEntrega,
-        totalGeral
-      );
+      const linkZap = gerarLinkWhatsApp(loja, pedidoId, formData, cart, observacoes, precoTotal, taxaEntrega, totalGeral);
 
       clearCart();
       setObservacoes({});
       setIsSacolaAberta(false);
-
       window.open(linkZap, "_blank");
-
     } catch (err) {
       console.error(err);
       setErroCheckout("Erro ao processar pedido. Tente novamente.");
     } finally {
-      loading && setLoading(false);
+      setLoading(false);
     }
-  };
+  }, [formData, loja, cart, observacoes, precoTotal, taxaSelecionada, clearCart]);
 
-  // Mapeia produtos para suas categorias, incluindo uma categoria "Todos"
+  // Memoização de listagem
   const categoriasComProdutos = useMemo(() => {
-    const map = {
-      todos: { id: 'todos', nome: 'Todos', itens: produtos }
-    };
-    (categorias || []).forEach(cat => {
-      map[cat.id] = {
-        ...cat,
-        itens: produtos.filter(p => p.categoria_id === cat.id)
-      };
+    const map = { todos: { id: 'todos', nome: 'Todos', itens: produtos } };
+    categorias?.forEach(cat => {
+      map[cat.id] = { ...cat, itens: produtos.filter(p => p.categoria_id === cat.id) };
     });
     return map;
   }, [produtos, categorias]);
 
-  // Filtra os produtos exibidos com base na categoria ativa
   const produtosExibidos = useMemo(() => {
-    if (activeCategory === 'todos') {
-      return produtos;
-    }
+    if (activeCategory === 'todos') return produtos;
     return categoriasComProdutos[activeCategory]?.itens || [];
   }, [activeCategory, produtos, categoriasComProdutos]);
 
   return (
-    <div className={theme}> {/* Aplica a classe 'dark' ou 'light' aqui */}
+    <div className={theme}>
       <div className="min-h-screen bg-white text-gray-900 dark:bg-[#070a13] dark:text-[#f9fafb] font-sans antialiased pb-36 overflow-x-hidden selection:bg-amber-500/30 w-full relative max-w-full transition-colors duration-500">
-      
-      {/* CSS para ocultar a barra de scroll mas manter a rolagem */}
+
       <style jsx global>{`
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        body { background-color: ${theme === 'dark' ? '#070a13' : '#ffffff'}; transition: background-color 0.5s; } /* Garante que o fundo do body mude */
+        body { background-color: ${theme === 'dark' ? '#070a13' : '#ffffff'}; transition: background-color 0.5s; }
       `}</style>
 
-      {/* HEADER CENTRALIZADO ESTILO WHATSMENU */}
       <header className="relative w-full border-b border-gray-100 dark:border-gray-900/80">
-        {/* Banner */}
-        <div className="h-40 sm:h-52 w-full bg-cover bg-center relative overflow-hidden" style={{ backgroundImage: `url(${loja.banner_url || 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=1000'})` }}>
+        <div className="h-40 sm:h-52 w-full bg-cover bg-center relative overflow-hidden" style={{ backgroundImage: `url(${loja?.banner_url || 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=1000'})` }}>
            <div className="absolute inset-0 bg-black/40 dark:bg-black/70" />
-           
-           {/* Botão de Tema Flutuante (Minimalista) */}
            <div className="absolute top-4 right-4 z-20">
             <button
               onClick={() => {
@@ -310,30 +287,26 @@ export default function CardapioClient({ loja, produtos, categorias }) {
            </div>
         </div>
 
-        {/* Info da Loja Centralizada */}
         <div className="max-w-2xl mx-auto px-5 relative -mt-12 sm:-mt-16 mb-8 text-center">
-          {/* Logo da Loja */}
           <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-[2rem] overflow-hidden bg-white dark:bg-gray-900 border-4 border-white dark:border-[#070a13] shadow-2xl mx-auto mb-3 transition-all">
-            <img src={loja.logo_url || "https://placehold.co/150"} alt={loja.nome} className="w-full h-full object-cover" />
+            <img src={loja?.logo_url || "https://placehold.co/150"} alt={loja?.nome} className="w-full h-full object-cover" />
           </div>
           
-          {/* Nome e Endereço da Loja */}
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-gray-900 dark:text-white mb-1 uppercase">{loja.nome}</h1>
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-gray-900 dark:text-white mb-1 uppercase">{loja?.nome}</h1>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 flex items-center justify-center gap-1.5 font-medium mb-6">
-            📍 {loja.endereco || "Consulte entrega/retirada"}
+            📍 {loja?.endereco || "Consulte entrega/retirada"}
           </p>
 
-          {/* Botões de Ação (WhatsApp e Horários) */}
           <div className="flex justify-center gap-3">
              <Link 
-                href={`https://wa.me/${formatarTelefone(loja.telefone_whatsapp).replace(/\D/g, '')}`} 
+                href={`https://wa.me/${formatarTelefone(loja?.telefone_whatsapp).replace(/\D/g, '')}`} 
                 target="_blank" 
                 className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] sm:text-xs font-black px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-xl shadow-emerald-500/20 uppercase tracking-widest flex-1 sm:flex-none"
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.4.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.713-1.457L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.623-1.013-5.091-2.861-6.941C16.569 2.015 14.1 1 11.524 1 6.088 1 1.663 5.37 1.66 10.8c-.001 1.73.453 3.41 1.317 4.91L1.975 20.35l4.672-1.196z"/></svg>
                 WhatsApp
               </Link>
-              <button 
+              <button
                 onClick={() => setIsHorariosAberto(true)}
                 className="bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300 text-[11px] sm:text-xs font-black px-5 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 active:scale-95 transition-all uppercase tracking-widest flex-1 sm:flex-none"
               >
@@ -342,21 +315,18 @@ export default function CardapioClient({ loja, produtos, categorias }) {
           </div>
         </div>
 
-        {/* STATUS DA LOJA (ABERTA/FECHADA) - Abaixo do Header Principal */}
         {!isLojaAberta && (
           <div 
             onClick={() => setIsHorariosAberto(true)}
-            className="w-full bg-rose-600/10 dark:bg-rose-600/20 text-rose-600 dark:text-rose-400 border-y border-rose-500/20 px-4 py-2.5 text-center text-[10px] font-black uppercase tracking-widest animate-pulse cursor-pointer transition-colors"
-          >
+            className="w-full bg-rose-600/10 dark:bg-rose-600/20 text-rose-600 dark:text-rose-400 border-y border-rose-500/20 px-4 py-2.5 text-center text-[9px] font-black uppercase tracking-widest animate-pulse cursor-pointer transition-colors">
             ⚠️ Estamos Fechados no Momento • Veja nossos horários
           </div>
         )}
 
-        {/* NAVEGAÇÃO DE CATEGORIAS CENTRALIZADA (Sticky para rolar com o conteúdo) */}
-        {produtos.length > 0 && (
+        {produtos?.length > 0 && (
           <nav className="w-full bg-white dark:bg-[#070a13] sticky top-0 z-30 backdrop-blur-md border-b border-gray-100 dark:border-gray-900/80 py-2 overflow-x-auto hide-scrollbar select-none shadow-sm transition-colors">
             <div className="max-w-2xl mx-auto px-5 flex justify-start sm:justify-center gap-2 items-center">
-              <button
+              <button 
                 onClick={() => setActiveCategory('todos')}
                 className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-shrink-0 ${
                   activeCategory === 'todos' ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20' : 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-white/10'
@@ -364,13 +334,13 @@ export default function CardapioClient({ loja, produtos, categorias }) {
               >
                 Todos
               </button>
-              {categorias.map(cat => (
-                <button
+              {categorias?.map(cat => (
+                <button 
                   key={cat.id}
                   onClick={() => setActiveCategory(cat.id)}
                   className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-shrink-0 ${
                     activeCategory === cat.id ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20' : 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-white/10'
-                  }`}
+                  }`} 
                 >
                   {cat.nome}
                 </button>
@@ -380,10 +350,9 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         )}
       </header>
 
-      {/* PEÇA NOVAMENTE (BANNER SUTIL) - Movido para depois do header para melhor visibilidade */}
       {isMounted && isLojaAberta && ultimoPedido && cart.length === 0 && (
-        <div className="max-w-2xl mx-auto px-5 mt-6"> {/* Adicionado mt-6 para espaçamento */}
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-[2rem] p-4 flex items-center justify-between gap-4 animate-fade-in">
+        <div className="max-w-2xl mx-auto px-5 mt-6">
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-[2rem] p-4 flex items-center justify-between gap-4 animate-fade-in"> 
             <div className="text-left overflow-hidden">
               <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1">✨ Peça Novamente</p>
               <p className="text-[10px] text-gray-400 truncate font-bold uppercase">
@@ -400,32 +369,29 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         </div>
       )}
 
-      {/* LISTAGEM DE PRODUTOS */}
       <main className="max-w-2xl mx-auto px-5 mt-10 space-y-10">
         {produtosExibidos.length === 0 ? (
           <div className="text-center py-16 border border-dashed border-gray-300 dark:border-gray-800 rounded-2xl text-gray-500 dark:text-gray-400 text-base font-medium">
             {activeCategory === 'todos' ? 'Nenhum produto disponível no momento. 🕒' : `Nenhum produto na categoria "${categoriasComProdutos[activeCategory]?.nome || ''}".`}
           </div>
         ) : (
-          // Renderiza todos os produtos se 'todos' estiver ativo, ou apenas os da categoria selecionada
           Object.values(categoriasComProdutos)
             .filter(cat => activeCategory === 'todos' || cat.id === activeCategory)
-            .map(cat => { // Cada categoria é um bloco
-              if (cat.itens.length === 0 && cat.id !== 'todos') return null; // Não mostra categorias vazias, a menos que seja "Todos"
+            .map(cat => {
+              if (cat.itens.length === 0 && cat.id !== 'todos') return null;
 
               return (
                 <div key={cat.id} className="space-y-4">
-                  {/* Título da Categoria (apenas se não for "Todos" ou se "Todos" estiver ativo e houver categorias) */}
-                  {(cat.id !== 'todos' || (activeCategory === 'todos' && categorias.length > 0 && produtos.length > 0)) && (
+                  {(cat.id !== 'todos' || (activeCategory === 'todos' && categorias?.length > 0 && produtos?.length > 0)) && (
                     <h2 className="text-sm font-black tracking-[0.2em] uppercase text-amber-600 dark:text-amber-500 border-b border-gray-100 dark:border-white/5 pb-2.5 flex items-center gap-2">
                       <span className="h-1.5 w-4 rounded-full bg-amber-500" />
                       {cat.nome}
                     </h2> 
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"> {/* Grid para produtos */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {cat.itens.map((produto) => {
-                    const itemNoCarrinho = cart.find(item => item.id === produto.id);
+                    const itemNaSacola = cart.find(item => item.id === produto.id);
 
                     return (
                       <div 
@@ -447,19 +413,19 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                             <span className={`text-sm sm:text-base font-black text-amber-600 dark:text-amber-500 font-mono ${!produto.disponivel && 'line-through opacity-50 text-gray-500 dark:text-gray-400'}`}>
                               R$ {parseFloat(produto.preco).toFixed(2)}
                             </span>
-                            {produto.disponivel ? (
-                              itemNoCarrinho ? (
-                                <div className="flex items-center bg-gray-100 dark:bg-gray-950 rounded-2xl border border-amber-900/20 dark:border-amber-300/20 overflow-hidden h-11 shadow-inner"> {/* Botões de +/- */}
+                            {produto.disponivel && !bloquearPorFechamento ? (
+                              itemNaSacola ? (
+                                <div className="flex items-center bg-gray-100 dark:bg-gray-950 rounded-2xl border border-amber-900/20 dark:border-amber-300/20 overflow-hidden h-11 shadow-inner">
                                   <button 
-                                    onClick={() => removeFromCart(produto.id)} 
+                                    onClick={() => diminuirQuantidade(produto.id)} 
                                     className="w-9 h-full text-base font-bold text-gray-500 dark:text-gray-400 active:text-rose-500 transition-colors select-none touch-manipulation"
                                   >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M20 12H4"/></svg>
                                   </button>
-                                  <span className="px-2 text-sm font-black font-mono text-gray-900 dark:text-white min-w-[24px] text-center">{itemNoCarrinho.quantidade}</span>
+                                  <span className="px-2 text-sm font-black font-mono text-gray-900 dark:text-white min-w-[24px] text-center">{itemNaSacola.quantidade}</span>
                                   <button 
                                     disabled={!isLojaAberta}
-                                    onClick={() => addToCart(produto)} 
+                                    onClick={() => aumentarQuantidade(produto)} 
                                     className={`w-9 h-full text-base font-bold text-gray-500 dark:text-gray-400 active:text-emerald-500 transition-colors select-none touch-manipulation ${!isLojaAberta && 'opacity-30'}`}
                                   >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
@@ -468,15 +434,15 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                               ) : (
                                 <button
                                   disabled={!isLojaAberta}
-                                  onClick={() => addToCart(produto)} 
-                                  className={`bg-gray-950 dark:bg-white border border-amber-600/30 hover:border-amber-500/60 text-amber-500/90 dark:text-gray-900 font-black text-[10px] uppercase tracking-widest px-4 h-9 rounded-xl transition-all active:scale-95 flex items-center justify-center shadow-lg select-none touch-manipulation ${!isLojaAberta && 'opacity-50 grayscale'}`}
+                                  onClick={() => aumentarQuantidade(produto)} 
+                                  className={`bg-gray-950 dark:bg-white border border-amber-600/30 hover:border-amber-500/60 text-amber-500/90 dark:text-gray-900 font-black text-[10px] uppercase tracking-widest px-4 h-9 rounded-xl transition-all active:scale-95 flex items-center justify-center shadow-lg select-none touch-manipulation ${(!isLojaAberta || bloquearPorFechamento) && 'opacity-50 grayscale'}`}
                                 >
-                                  {isLojaAberta ? 'Adicionar' : 'Fechado'} <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+                                  {bloquearPorFechamento ? 'Encerrando' : (isLojaAberta ? 'Adicionar' : 'Fechado')} <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
                                 </button>
                               )
                             ) : (
                               <span className="bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/5 text-gray-400 dark:text-gray-500 font-black text-[10px] uppercase tracking-widest px-3 h-9 rounded-xl flex items-center justify-center">
-                                Indisponível
+                                {bloquearPorFechamento ? 'Indisponível' : 'Indisponível'}
                               </span>
                             )}
                           </div>
@@ -491,13 +457,12 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         )}
       </main>
 
-      {/* BARRA FIXA INFERIOR (SACOLA NATIVA - ALTURA CONFORTÁVEL) */}
       {totalItens > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-[#070a13]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/5 p-5 z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.1)]"> {/* Barra inferior da sacola */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-[#070a13]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/5 p-5 z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
           <div className="max-w-2xl mx-auto flex justify-between items-center gap-4">
             <div className="text-left">
               <p className="text-[10px] font-black text-amber-600 dark:text-amber-500 uppercase tracking-widest mb-0.5">Sua Sacola</p>
-              <p className="text-lg font-black font-mono text-gray-900 dark:text-white"> {/* Corrigido para "Sacola" */}
+              <p className="text-lg font-black font-mono text-gray-900 dark:text-white">
                 {totalItens} {totalItens === 1 ? 'item' : 'itens'} <span className="text-gray-400 font-normal">por</span> R$ {precoTotal.toFixed(2)}
               </p>
             </div>
@@ -512,7 +477,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         </div>
       )}
 
-      {/* DETALHES DO PRODUTO (MODAL MOBILE-FIRST LIMPO) */}
       {produtoSelecionado && (
         <div className="fixed inset-0 bg-black/85 dark:bg-black/50 backdrop-blur-md z-50 flex items-center justify-center p-4" onClick={() => setProdutoSelecionado(null)}>
           <div className="bg-white dark:bg-[#121826] border border-gray-300 dark:border-gray-800 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -545,7 +509,10 @@ export default function CardapioClient({ loja, produtos, categorias }) {
               <span className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-500 font-mono">R$ {parseFloat(produtoSelecionado.preco).toFixed(2)}</span>
               <button 
                 disabled={!isLojaAberta}
-                onClick={() => { isLojaAberta && addToCart(produtoSelecionado); setProdutoSelecionado(null); }}
+                onClick={() => { 
+                  if (isLojaAberta) aumentarQuantidade(produtoSelecionado); 
+                  setProdutoSelecionado(null); 
+                }}
                 className={`bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs uppercase tracking-wider h-14 px-6 rounded-2xl transition-all shadow-lg active:scale-95 touch-manipulation ${!isLojaAberta && 'opacity-50 grayscale cursor-not-allowed'}`}
               >
                 {isLojaAberta ? 'Adicionar à sacola' : 'Loja Fechada'}
@@ -555,7 +522,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         </div>
       )}
 
-      {/* PAINEL DA GAVETA DA SACOLA / CHECKOUT DIRETO */}
       {isSacolaAberta && (
         <div className="fixed inset-0 bg-black/80 dark:bg-black/50 backdrop-blur-md z-50 flex items-end sm:items-stretch sm:justify-end">
           <form onSubmit={handleFinalizarPedido} className="w-full sm:max-w-md bg-white dark:bg-[#121826] h-[94vh] sm:h-full p-5 rounded-t-3xl sm:rounded-none flex flex-col justify-between shadow-2xl border-t sm:border-t-0 sm:border-l border-gray-300 dark:border-gray-800 overflow-y-auto">
@@ -570,7 +536,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                 </div>
               </div>
 
-              {/* LISTAGEM DOS ITENS ADICIONADOS */}
               <div className="space-y-3 max-h-[25vh] overflow-y-auto border-b border-gray-900/60 pb-3 pr-1">
                 {cart.length === 0 ? <p className="text-center text-gray-500 dark:text-gray-600 text-sm">Sua sacola está vazia.</p> : cart.map((item) => (
                   <div key={item.id} className="bg-gray-100 dark:bg-gray-950/40 p-3 rounded-2xl border border-gray-200 dark:border-gray-900/60 space-y-3">
@@ -585,7 +550,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                         </div>
                       </div>
                       
-                      {/* SELETOR DE QUANTIDADE NA SACOLA */}
                       <div className="flex items-center bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 h-9 px-1 shadow-sm">
                         <button 
                           type="button"
@@ -611,7 +575,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                 ))}
               </div>
 
-              {/* FORMULÁRIO DE ENVIO ZERO JARGÃO */}
               <div className="space-y-4">
                 <h3 className="text-sm font-black uppercase text-amber-600 dark:text-amber-500 tracking-wider">Dados para Envio</h3>
                 
@@ -631,7 +594,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                   </div>
                 )}
 
-                {/* BOTÕES DE ENTREGA CONFORTÁVEIS (MÍNIMO 48PX DE ALTURA) */}
                 <div>
                   <label className="block text-xs text-gray-500 dark:text-gray-400 font-black uppercase mb-1">Como deseja receber? *</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -662,7 +624,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
                       </select>
                     </div>
 
-                    {/* Campos de endereço só aparecem após escolher região */}
                     {formData.regiao && (
                       <div className="space-y-4 animate-slide-up">
                         <div>
@@ -759,7 +720,6 @@ export default function CardapioClient({ loja, produtos, categorias }) {
         </div>
       )}
 
-      {/* MODAL DE HORÁRIOS DE FUNCIONAMENTO */}
       {isHorariosAberto && (
         <div className="fixed inset-0 bg-black/90 dark:bg-black/50 backdrop-blur-md z-[60] flex items-center justify-center p-4" onClick={() => setIsHorariosAberto(false)}>
           <div className="bg-white dark:bg-[#121826] border border-gray-300 dark:border-gray-800 w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-6" onClick={(e) => e.stopPropagation()}>
